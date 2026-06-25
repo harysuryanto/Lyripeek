@@ -9,9 +9,16 @@ import SwiftUI
 
 @main
 struct LyripeekApp: App {
+    @StateObject private var nowPlayingService = NowPlayingService()
+    @StateObject private var lyricsService = LyricsService()
+
     var body: some Scene {
-        WindowGroup {
+        MenuBarExtra("Lyripeek", systemImage: "music.note.list") {
             ContentView()
+                .environmentObject(nowPlayingService)
+                .environmentObject(lyricsService)
+                .frame(minWidth: 360, minHeight: 480)
         }
+        .menuBarExtraStyle(.window)
     }
 }
