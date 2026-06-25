@@ -5,42 +5,37 @@
 //  Created by Hary Suryanto on 24/06/26.
 //
 
-import AppKit
 import Combine
 import Foundation
 import MediaPlayer
 
 /// Observes the system's currently playing media.
 ///
-/// Primary source: `MPNowPlayingInfoCenter` (Spotify, Apple Music, etc.).
-/// Fallback source: active browser tab/window title for web players such as
-/// YouTube Music that do not publish to `MPNowPlayingInfoCenter`.
+/// Primary sources are native desktop players (Spotify, Apple Music) queried
+/// directly via AppleScript, because `MPNowPlayingInfoCenter` does not reliably
+/// expose other apps' data on macOS. `MPNowPlayingInfoCenter` is kept as a
+/// secondary fallback.
 final class NowPlayingService: ObservableObject {
     @Published private(set) var title: String = ""
     @Published private(set) var artist: String = ""
+    @Published private(set) var album: String = ""
+    @Published private(set) var duration: TimeInterval = 0
     @Published private(set) var elapsedTime: TimeInterval = 0
-    @Published private(set) var rawNowPlayingInfo: [String: Any] = [:]
     @Published private(set) var sourceDescription: String = ""
-    @Published private(set) var lastRawBrowserTitle: String = ""
+    @Published private(set) var rawNowPlayingInfo: [String: Any] = [:]
     @Published private(set) var lastAppleScriptError: String = ""
+    @Published private(set) var lastSpotifyOutput: String = ""
+    @Published private(set) var lastAppleMusicOutput: String = ""
+    @Published private(set) var lastParsedElapsedTime: TimeInterval = 0
+    @Published private(set) var lastParsedDuration: TimeInterval = 0
 
     /// Emitted whenever the playing track (title + artist) changes.
-    var trackChangedPublisher: AnyPublisher<(title: String, artist: String), Never> {
+    var trackChangedPublisher: AnyPublisher<(title: String, artist: String, album: String, duration: TimeInterval), Never> {
         trackChangedSubject.eraseToAnyPublisher()
     }
 
     private var cancellables = Set<AnyCancellable>()
-    private let trackChangedSubject = PassthroughSubject<(title: String, artist: String), Never>()
-
-    // MARK: - MPNowPlayingInfoCenter state
-    private var lastRawElapsedTime: TimeInterval = 0
-    private var lastInfoTimestamp: Date?
-    private var lastPlaybackRate: Double = 1
-
-    // MARK: - Browser fallback state
-    private var browserFallbackActive = false
-    private var browserTrackStartTime: Date?
-    private var browserLastDetectedTitle = ""
+    private let trackChangedSubject = PassthroughSubject<(title: String, artist: String, album: String, duration: TimeInterval), Never>()
 
     init() {
         startPolling()
@@ -50,166 +45,212 @@ final class NowPlayingService: ObservableObject {
         Timer.publish(every: 1.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
-                self?.refresh()
+                Task { [weak self] in
+                    await self?.refresh()
+                }
             }
             .store(in: &cancellables)
 
-        refresh()
+        Task { [weak self] in
+            await self?.refresh()
+        }
     }
 
-    private func refresh() {
+    private func refresh() async {
+        // 1. Try desktop music apps directly via AppleScript.
+        if let track = await fetchDesktopPlayerTrack() {
+            await MainActor.run {
+                applyTrack(track, source: track.source)
+            }
+            return
+        }
+
+        // 2. Fall back to MPNowPlayingInfoCenter.
         let info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        rawNowPlayingInfo = info
 
-        let extracted = extractTrackInfo(from: info)
-        let hasSystemInfo = !extracted.title.isEmpty
-
-        if hasSystemInfo {
-            applySystemTrack(extracted)
-        } else {
-            detectBrowserTab { [weak self] browserTitle in
-                self?.applyBrowserTrack(browserTitle)
-            }
-        }
-    }
-
-    // MARK: - System track handling
-
-    private func applySystemTrack(_ extracted: (title: String, artist: String)) {
-        browserFallbackActive = false
-        browserLastDetectedTitle = ""
-        browserTrackStartTime = nil
-
-        let newTitle = normalizeMetadata(extracted.title)
-        let newArtist = normalizeMetadata(extracted.artist)
-
-        updateTrack(title: newTitle, artist: newArtist, source: "Now Playing")
-
-        let info = rawNowPlayingInfo
-        let rate = info[MPNowPlayingInfoPropertyPlaybackRate] as? Double ?? 1
+        let newTitle = normalizeMetadata(info[MPMediaItemPropertyTitle] as? String ?? "")
+        let newArtist = normalizeMetadata(info[MPMediaItemPropertyArtist] as? String ?? "")
+        let newAlbum = normalizeMetadata(info[MPMediaItemPropertyAlbumTitle] as? String ?? "")
+        let newDuration = info[MPMediaItemPropertyPlaybackDuration] as? TimeInterval ?? 0
         let rawElapsed = info[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? TimeInterval ?? 0
+        let rate = info[MPNowPlayingInfoPropertyPlaybackRate] as? Double ?? 1
 
-        let now = Date()
-        if let lastTimestamp = lastInfoTimestamp {
-            let delta = now.timeIntervalSince(lastTimestamp)
-            elapsedTime = lastRawElapsedTime + (delta * rate)
-        } else {
-            elapsedTime = rawElapsed
-            lastRawElapsedTime = rawElapsed
-            lastInfoTimestamp = now
-            lastPlaybackRate = rate
-            return
-        }
+        await MainActor.run {
+            rawNowPlayingInfo = info
 
-        // Resync if the player posted a notably different elapsed time.
-        if abs(rawElapsed - elapsedTime) > 2.0 {
-            elapsedTime = rawElapsed
-            lastRawElapsedTime = rawElapsed
-            lastInfoTimestamp = now
-            lastPlaybackRate = rate
-        }
-    }
-
-    // MARK: - Browser fallback handling
-
-    private func applyBrowserTrack(_ browserTitle: String?) {
-        guard let browserTitle, !browserTitle.isEmpty else {
-            // No browser title either — clear everything if we were in browser fallback.
-            if browserFallbackActive {
-                updateTrack(title: "", artist: "", source: "")
-                elapsedTime = 0
-                browserFallbackActive = false
-                browserTrackStartTime = nil
-                browserLastDetectedTitle = ""
+            if !newTitle.isEmpty || !newArtist.isEmpty {
+                applyTrack(
+                    DesktopTrack(
+                        title: newTitle,
+                        artist: newArtist,
+                        album: newAlbum,
+                        duration: newDuration,
+                        elapsedTime: rawElapsed,
+                        playbackRate: rate,
+                        source: "Now Playing"
+                    ),
+                    source: "Now Playing"
+                )
+            } else {
+                clearTrack()
             }
-            return
-        }
-
-        let parsed = parseBrowserTitle(browserTitle)
-        let newTitle = normalizeMetadata(parsed.title)
-        let newArtist = normalizeMetadata(parsed.artist)
-
-        let trackKey = "\(newArtist) - \(newTitle)"
-        let trackDidChange = trackKey != browserLastDetectedTitle
-
-        browserFallbackActive = true
-        lastInfoTimestamp = nil
-        lastRawElapsedTime = 0
-
-        if trackDidChange {
-            browserLastDetectedTitle = trackKey
-            browserTrackStartTime = Date()
-            elapsedTime = 0
-            updateTrack(title: newTitle, artist: newArtist, source: "Browser tab")
-        } else if let startTime = browserTrackStartTime {
-            elapsedTime = Date().timeIntervalSince(startTime)
         }
     }
 
-    // MARK: - Shared track update
+    // MARK: - Desktop player AppleScript
 
-    private func updateTrack(title newTitle: String, artist newArtist: String, source: String) {
-        let trackDidChange = newTitle != title || newArtist != artist
+    private func fetchDesktopPlayerTrack() async -> DesktopTrack? {
+        let spotify = await runAppleScript(Self.spotifyScript) ?? ""
+        lastSpotifyOutput = spotify.isEmpty ? "<empty>" : spotify
+        if let track = parseDesktopPlayerOutput(spotify, source: "Spotify") {
+            return track
+        }
+
+        let music = await runAppleScript(Self.appleMusicScript) ?? ""
+        lastAppleMusicOutput = music.isEmpty ? "<empty>" : music
+        if let track = parseDesktopPlayerOutput(music, source: "Apple Music") {
+            return track
+        }
+
+        return nil
+    }
+
+    private static let spotifyScript = """
+    tell application "Spotify"
+        if it is running then
+            if player state is playing then
+                set trackName to name of current track
+                set trackArtist to artist of current track
+                set trackAlbum to album of current track
+                set trackDuration to (duration of current track) / 1000
+                set trackPosition to player position
+                return trackName & "|" & trackArtist & "|" & trackAlbum & "|" & trackDuration & "|" & trackPosition
+            end if
+        end if
+    end tell
+    return ""
+    """
+
+    private static let appleMusicScript = """
+    tell application "Music"
+        if it is running then
+            if player state is playing then
+                set trackName to name of current track
+                set trackArtist to artist of current track
+                set trackAlbum to album of current track
+                set trackDuration to duration of current track
+                set trackPosition to player position
+                return trackName & "|" & trackArtist & "|" & trackAlbum & "|" & trackDuration & "|" & trackPosition
+            end if
+        end if
+    end tell
+    return ""
+    """
+
+    private func parseDesktopPlayerOutput(_ output: String, source: String) -> DesktopTrack? {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let parts = trimmed.components(separatedBy: "|")
+        guard parts.count >= 5 else { return nil }
+
+        let title = normalizeMetadata(parts[0])
+        let artist = normalizeMetadata(parts[1])
+        let album = normalizeMetadata(parts[2])
+        let duration = parseTimeInterval(parts[3])
+        let elapsed = parseTimeInterval(parts[4])
+
+        guard !title.isEmpty || !artist.isEmpty else { return nil }
+
+        return DesktopTrack(
+            title: title,
+            artist: artist,
+            album: album,
+            duration: duration,
+            elapsedTime: elapsed,
+            playbackRate: 1,
+            source: source
+        )
+    }
+
+    private func parseTimeInterval(_ value: String) -> TimeInterval {
+        let normalized = value.trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: ",", with: ".")
+        return TimeInterval(normalized) ?? 0
+    }
+
+    private func runAppleScript(_ script: String) async -> String? {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+                process.arguments = ["-e", script]
+
+                let outputPipe = Pipe()
+                let errorPipe = Pipe()
+                process.standardOutput = outputPipe
+                process.standardError = errorPipe
+
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+
+                    let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                    let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                    let output = String(data: outputData, encoding: .utf8) ?? ""
+                    let error = String(data: errorData, encoding: .utf8) ?? ""
+
+                    DispatchQueue.main.async { [weak self] in
+                        if process.terminationStatus == 0 {
+                            self?.lastAppleScriptError = ""
+                            continuation.resume(
+                                returning: output.trimmingCharacters(in: .whitespacesAndNewlines)
+                            )
+                        } else {
+                            self?.lastAppleScriptError = error.isEmpty ? output : error
+                            continuation.resume(returning: nil)
+                        }
+                    }
+                } catch {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.lastAppleScriptError = error.localizedDescription
+                        continuation.resume(returning: nil)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Track state
+
+    private func applyTrack(_ track: DesktopTrack, source: String) {
+        let newTitle = track.title
+        let newArtist = track.artist
+        let newAlbum = track.album
+
+        let trackDidChange = newTitle != title || newArtist != artist || newAlbum != album
+
         title = newTitle
         artist = newArtist
+        album = newAlbum
+        duration = track.duration
+        elapsedTime = track.elapsedTime
+        lastParsedDuration = track.duration
+        lastParsedElapsedTime = track.elapsedTime
         sourceDescription = source
 
         if trackDidChange && (!newTitle.isEmpty || !newArtist.isEmpty) {
-            trackChangedSubject.send((title: newTitle, artist: newArtist))
+            trackChangedSubject.send((title: newTitle, artist: newArtist, album: newAlbum, duration: track.duration))
         }
     }
 
-    // MARK: - Parsing helpers
-
-    private func extractTrackInfo(from info: [String: Any]) -> (title: String, artist: String) {
-        var rawTitle = info[MPMediaItemPropertyTitle] as? String ?? ""
-        var rawArtist = info[MPMediaItemPropertyArtist] as? String ?? ""
-
-        if rawTitle.isEmpty {
-            rawTitle = info[MPMediaItemPropertyAlbumTitle] as? String ?? ""
-        }
-
-        if rawArtist.isEmpty && rawTitle.contains(" - ") {
-            let components = rawTitle.components(separatedBy: " - ")
-            if components.count >= 2 {
-                rawArtist = components.dropLast().joined(separator: " - ")
-                rawTitle = components.last ?? rawTitle
-            }
-        }
-
-        return (title: rawTitle, artist: rawArtist)
-    }
-
-    /// Parses common browser tab titles. YouTube Music tabs are usually:
-    ///   "Song Title - Artist"
-    ///   "Song Title - Artist - Album"
-    ///   "Song Title - Artist - YouTube Music"
-    private func parseBrowserTitle(_ value: String) -> (title: String, artist: String) {
-        var cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let siteSuffixes = [
-            " - YouTube Music",
-            " - YouTube",
-            " - Spotify",
-            " - Apple Music",
-            " - SoundCloud",
-        ]
-
-        for suffix in siteSuffixes {
-            if cleaned.hasSuffix(suffix) {
-                cleaned.removeLast(suffix.count)
-                cleaned = cleaned.trimmingCharacters(in: .whitespaces)
-            }
-        }
-
-        let components = cleaned.components(separatedBy: " - ")
-        if components.count >= 2 {
-            let title = components.last ?? cleaned
-            let artist = components.dropLast().joined(separator: " - ")
-            return (title: title, artist: artist)
-        }
-
-        return (title: cleaned, artist: "")
+    private func clearTrack() {
+        title = ""
+        artist = ""
+        album = ""
+        duration = 0
+        elapsedTime = 0
+        sourceDescription = ""
     }
 
     private func normalizeMetadata(_ value: String) -> String {
@@ -232,85 +273,14 @@ final class NowPlayingService: ObservableObject {
 
         return result.trimmingCharacters(in: .whitespaces)
     }
+}
 
-    // MARK: - AppleScript browser detection
-
-    private func detectBrowserTab(completion: @escaping (String?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let browserNames = ["Safari", "Google Chrome", "Brave Browser", "Microsoft Edge", "Arc"]
-
-            // Use NSWorkspace to find the frontmost app without needing System Events.
-            let frontmostName = NSWorkspace.shared.frontmostApplication?.localizedName
-            let targetBrowsers: [String]
-            if let frontmostName, browserNames.contains(frontmostName) {
-                targetBrowsers = [frontmostName] + browserNames.filter { $0 != frontmostName }
-            } else {
-                targetBrowsers = browserNames
-            }
-
-            var rawTitle = ""
-            var scriptError = ""
-
-            for browser in targetBrowsers {
-                let script = """
-                tell application "\(browser)"
-                    if it is running then
-                        try
-                            return name of front window
-                        on error errMsg
-                            return "ERROR:" & errMsg
-                        end try
-                    end if
-                end tell
-                return ""
-                """
-
-                let (output, error) = self.runAppleScript(script)
-                if let error, !error.isEmpty {
-                    scriptError = error
-                }
-
-                let trimmed = output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if trimmed.hasPrefix("ERROR:") {
-                    scriptError = trimmed
-                    continue
-                }
-                if !trimmed.isEmpty {
-                    rawTitle = trimmed
-                    break
-                }
-            }
-
-            DispatchQueue.main.async {
-                self.lastRawBrowserTitle = rawTitle
-                self.lastAppleScriptError = scriptError.trimmingCharacters(in: .whitespacesAndNewlines)
-                completion(rawTitle.isEmpty ? nil : rawTitle)
-            }
-        }
-    }
-
-    private func runAppleScript(_ source: String) -> (output: String?, error: String?) {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        task.arguments = ["-e", source]
-
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        task.standardOutput = outputPipe
-        task.standardError = errorPipe
-
-        do {
-            try task.run()
-            task.waitUntilExit()
-
-            let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-
-            let output = String(data: outputData, encoding: .utf8)
-            let error = String(data: errorData, encoding: .utf8)
-            return (output, error)
-        } catch {
-            return (nil, error.localizedDescription)
-        }
-    }
+private struct DesktopTrack {
+    let title: String
+    let artist: String
+    let album: String
+    let duration: TimeInterval
+    let elapsedTime: TimeInterval
+    let playbackRate: Double
+    let source: String
 }

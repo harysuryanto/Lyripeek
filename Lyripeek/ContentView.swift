@@ -33,12 +33,18 @@ struct ContentView: View {
             Divider()
                 .padding(.vertical, 8)
             debugSection
+            quitButton
         }
         .padding()
         .frame(minWidth: 360, minHeight: 480)
         .onAppear(perform: loadLyricsForCurrentTrack)
         .onReceive(nowPlayingService.trackChangedPublisher) { track in
-            lyricsService.loadLyrics(title: track.title, artist: track.artist)
+            lyricsService.loadLyrics(
+                title: track.title,
+                artist: track.artist,
+                album: track.album,
+                duration: track.duration
+            )
         }
         .onChange(of: demoMode) { _, isDemo in
             isDemo ? startDemoTimer() : stopDemoTimer()
@@ -96,17 +102,42 @@ struct ContentView: View {
 
     @ViewBuilder
     private var lyricsSection: some View {
-        if lyricsService.isLoading {
-            Spacer()
-            ProgressView("Loading lyrics…")
-            Spacer()
-        } else if lyricsService.lines.isEmpty {
-            Spacer()
-            Text("No lyrics available")
-                .foregroundStyle(.secondary)
-            Spacer()
-        } else {
-            lyricsList
+        VStack(spacing: 8) {
+            lyricsStatusLabel
+                .padding(.bottom, 4)
+
+            if lyricsService.isLoading {
+                Spacer()
+                ProgressView("Loading lyrics…")
+                Spacer()
+            } else if lyricsService.lines.isEmpty {
+                Spacer()
+                Text("No lyrics available")
+                    .foregroundStyle(.secondary)
+                Spacer()
+            } else {
+                lyricsList
+            }
+        }
+    }
+
+    private var lyricsStatusLabel: some View {
+        Group {
+            if lyricsService.isLoading {
+                Text("Fetching lyrics…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if lyricsService.fallbackToMock {
+                Text("Real lyrics unavailable — showing test lyrics")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            } else if !lyricsService.lines.isEmpty {
+                Text("Synced lyrics loaded")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            } else {
+                EmptyView()
+            }
         }
     }
 
@@ -168,25 +199,53 @@ struct ContentView: View {
         .controlSize(.small)
     }
 
+    private var quitButton: some View {
+        Button("Quit Lyripeek") {
+            NSApplication.shared.terminate(nil)
+        }
+        .controlSize(.small)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.top, 4)
+    }
+
     private var debugText: String {
-        var lines: [String] = []
+        var sections: [String] = []
 
         let info = nowPlayingService.rawNowPlayingInfo
         if info.isEmpty {
-            lines.append("No now-playing info available.")
+            sections.append("No now-playing info available.")
         } else {
-            lines.append("NowPlayingInfoCenter:")
-            lines += info
+            sections.append("NowPlayingInfoCenter:")
+            sections += info
                 .sorted { String(describing: $0.key) < String(describing: $1.key) }
                 .map { "  \($0.key): \($0.value)" }
         }
 
-        lines.append("")
-        lines.append("Browser fallback:")
-        lines.append("  raw title: \(nowPlayingService.lastRawBrowserTitle.isEmpty ? "<none>" : nowPlayingService.lastRawBrowserTitle)")
-        lines.append("  error: \(nowPlayingService.lastAppleScriptError.isEmpty ? "<none>" : nowPlayingService.lastAppleScriptError)")
+        sections.append("")
+        sections.append("AppleScript error:")
+        if nowPlayingService.lastAppleScriptError.isEmpty {
+            sections.append("  <none>")
+        } else {
+            sections.append("  \(nowPlayingService.lastAppleScriptError)")
+        }
 
-        return lines.joined(separator: "\n")
+        sections.append("")
+        sections.append("Parsed elapsed: \(String(format: "%.2f", nowPlayingService.lastParsedElapsedTime))s")
+        sections.append("Parsed duration: \(String(format: "%.2f", nowPlayingService.lastParsedDuration))s")
+
+        sections.append("")
+        sections.append("Spotify script output: \(nowPlayingService.lastSpotifyOutput)")
+        sections.append("Apple Music script output: \(nowPlayingService.lastAppleMusicOutput)")
+
+        sections.append("")
+        sections.append("Raw LRC source:")
+        if lyricsService.rawLRC.isEmpty {
+            sections.append("  <empty>")
+        } else {
+            sections.append("  \(lyricsService.rawLRC)")
+        }
+
+        return sections.joined(separator: "\n")
     }
 
     // MARK: - Helpers
@@ -194,7 +253,9 @@ struct ContentView: View {
     private func loadLyricsForCurrentTrack() {
         lyricsService.loadLyrics(
             title: nowPlayingService.title,
-            artist: nowPlayingService.artist
+            artist: nowPlayingService.artist,
+            album: nowPlayingService.album,
+            duration: nowPlayingService.duration
         )
     }
 
