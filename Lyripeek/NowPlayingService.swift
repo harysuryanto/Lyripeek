@@ -94,41 +94,48 @@ final class NowPlayingService: ObservableObject {
         let systemTrack = await systemSource.currentTrack()
         let systemArtwork = systemSource.systemArtwork
 
-        // Layer 2: figure out which app is currently publishing.
-        let publisherBundleID = MediaRemoteClient.shared.currentPublisherBundleIdentifier()
-        let publisherDisplayName = MediaRemoteClient.shared.currentPublisherDisplayName()
-
-        // Layer 3a: try to overlay enrichment data from the detected publisher's
-        // known source. Only adopt the overlay if it's actively playing, or if
-        // we don't have any system data — a paused overlay would otherwise
-        // mask a different app that's currently playing.
-        var resolvedTrack: DesktopTrack? = systemTrack
-        var overlayBundleID: String? = publisherBundleID
-
-        if let publisherBundleID,
-           let match = enrichmentSources.first(where: { $0.bundleIdentifier == publisherBundleID }),
-           let overlay = await match.currentTrack() {
-            if !overlay.isPaused || resolvedTrack == nil {
-                resolvedTrack = overlay
-            } else {
-                // Detected publisher is paused; fall through and look for an
-                // actively-playing known source.
-                overlayBundleID = nil
+        // If two known sources are both actively playing at the same time,
+        // the frontmost app wins. The order below is the deterministic
+        // tiebreaker for the rare case where the frontmost app isn't one of
+        // our known sources.
+        let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let orderedSources: [PlayerSource] = {
+            guard let frontmostBundleID else { return enrichmentSources }
+            var matched: [PlayerSource] = []
+            var rest: [PlayerSource] = []
+            for source in enrichmentSources {
+                if source.bundleIdentifier == frontmostBundleID {
+                    matched.append(source)
+                } else {
+                    rest.append(source)
+                }
             }
+            return matched + rest
+        }()
+
+        // Layer 2: prefer a non-paused system track. This is the path used
+        // for Safari, VLC, Podcasts, Audible, and any other app that publishes
+        // to the system Now Playing service.
+        var resolvedTrack: DesktopTrack? = nil
+        if let systemTrack, !systemTrack.isPaused {
+            resolvedTrack = systemTrack
         }
 
-        // Layer 3b: if the detected publisher is paused (or unknown) and we
-        // don't have a non-paused system track, scan every known source and
-        // adopt the first one that is actively playing.
-        let haveActiveTrack = resolvedTrack.map { !$0.isPaused } ?? false
-        if !haveActiveTrack {
-            for source in enrichmentSources where source.bundleIdentifier != publisherBundleID {
+        // Layer 3: scan known sources in frontmost-priority order. First one
+        // that is actively playing wins.
+        if resolvedTrack == nil {
+            for source in orderedSources {
                 if let candidate = await source.currentTrack(), !candidate.isPaused {
                     resolvedTrack = candidate
-                    overlayBundleID = source.bundleIdentifier
                     break
                 }
             }
+        }
+
+        // Layer 4: paused system track as a last resort so the user still
+        // sees the last-known context (e.g. "Spotify — paused" in the menu bar).
+        if resolvedTrack == nil {
+            resolvedTrack = systemTrack
         }
 
         await MainActor.run {
@@ -153,7 +160,7 @@ final class NowPlayingService: ObservableObject {
             if track.source != "Now Playing" {
                 resolvedSource = track.source
             } else {
-                resolvedSource = publisherDisplayName
+                resolvedSource = MediaRemoteClient.shared.currentPublisherDisplayName()
             }
 
             applyTrack(
@@ -165,7 +172,7 @@ final class NowPlayingService: ObservableObject {
                     elapsedTime: track.elapsedTime,
                     playbackRate: track.playbackRate,
                     source: resolvedSource,
-                    bundleIdentifier: overlayBundleID ?? track.bundleIdentifier,
+                    bundleIdentifier: track.bundleIdentifier,
                     isPaused: track.isPaused
                 ),
                 artwork: systemArtwork

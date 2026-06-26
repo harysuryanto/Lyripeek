@@ -49,7 +49,7 @@ The app runs as a menu-bar item. Click the music-note icon to open the lyrics po
 
 - `LyripeekApp.swift` – app entry point and `AppDelegate`; wires up services.
 - `StatusBarController.swift` – manages the `NSStatusItem`, menu-bar title, and lyrics popover.
-- `NowPlayingService.swift` – three-layer orchestrator: system `MPNowPlayingInfoCenter` is the source of truth, `MediaRemoteClient` detects the active publisher, and per-app `PlayerSource`s overlay enrichment data.
+- `NowPlayingService.swift` – actively-playing scan orchestrator: prefers a non-paused `MPNowPlayingInfoCenter` track, then iterates known `PlayerSource`s (in frontmost-app-priority order) for the first one that is actively playing, then falls back to a paused system track. No static priority list gates track selection.
 - `Services/MediaRemoteClient.swift` – loads the private `MediaRemote.framework` via `dlsym` and falls back to `NSWorkspace.shared.runningApplications` to identify the active publisher. The MediaRemote PID getter is known to crash on unprivileged clients and is intentionally not called; the public `NSWorkspace` scan is the reliable path.
 - `PlayerSources/PlayerSource.swift` – protocol every provider implements.
 - `PlayerSources/SystemNowPlayingPlayerSource.swift` – the always-on system fallback.

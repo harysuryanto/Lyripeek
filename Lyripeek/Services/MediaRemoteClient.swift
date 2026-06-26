@@ -38,9 +38,13 @@ final class MediaRemoteClient {
     private let pidSymbolAddress: UnsafeMutableRawObject?
     private let displaySymbolAddress: UnsafeMutableRawObject?
 
-    /// Bundle ids of apps we know how to detect via AppleScript if the
-    /// MediaRemote dlsym path is unavailable. Order = priority.
-    private let knownPublisherBundleIDs: [String] = [
+    /// Bundle ids of apps we surface as a friendly source label when the
+    /// system track has no `bundleIdentifier` (e.g. came from an unknown
+    /// publisher). Order is a deterministic tiebreaker when more than one
+    /// known app is running. The orchestrator no longer uses this list to
+    /// pick the active track — track selection is driven by
+    /// `NowPlayingService.refresh()` scanning for actively-playing sources.
+    private let knownPublisherLabelIDs: [String] = [
         "com.spotify.client",
         "com.apple.Music",
         "com.sertacozercan.Kaset",
@@ -128,14 +132,15 @@ final class MediaRemoteClient {
     // MARK: - Private
 
     /// Returns the bundle id of a known media app if it's running. Cheap,
-    /// synchronous, safe. Synchronous means the orchestrator can call it on
-    /// every poll without blocking the UI.
+    /// synchronous, safe. Used only to provide a friendly source label —
+    /// the orchestrator's track selection runs independently in
+    /// `NowPlayingService.refresh()`.
     private func detectKnownPublisherFromRunningApps() -> String? {
         let runningBundleIDs = Set(
             NSWorkspace.shared.runningApplications
                 .compactMap { $0.bundleIdentifier }
         )
-        for id in knownPublisherBundleIDs where runningBundleIDs.contains(id) {
+        for id in knownPublisherLabelIDs where runningBundleIDs.contains(id) {
             return id
         }
         return nil
