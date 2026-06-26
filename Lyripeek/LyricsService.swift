@@ -10,13 +10,11 @@ import Foundation
 
 /// Loads and caches time-synced lyrics.
 ///
-/// Fetches real LRC from LRCLIB (https://lrclib.net) when possible, and falls
-/// back to a hardcoded mock LRC when the network request fails or returns no
-/// results.
+/// Fetches real LRC from LRCLIB (https://lrclib.net). When the network
+/// request fails or returns no synced lyrics, `lines` stays empty.
 final class LyricsService: ObservableObject {
     @Published private(set) var lines: [LyricLine] = []
     @Published private(set) var isLoading: Bool = false
-    @Published private(set) var fallbackToMock: Bool = false
     @Published private(set) var rawLRC: String = ""
     @Published private(set) var currentLineText: String = ""
 
@@ -50,18 +48,12 @@ final class LyricsService: ObservableObject {
     private static let cacheDirectoryName = "Lyripeek"
     private static let cacheFileName = "lyrics-cache.json"
 
-    /// Hardcoded mock LRC used as a fallback.
-    private static let mockLRC = """
-    [00:05.00]Line one
-    [00:10.00]Line two
-    [00:15.00]Line three
-    """
-
     /// Loads lyrics for the given track. Results are cached on disk by
     /// `artist + title`.
     ///
-    /// First attempts to fetch real synced lyrics from LRCLIB. If that fails or
-    /// returns nothing, the mock LRC is used and `fallbackToMock` is set.
+    /// Fetches real synced lyrics from LRCLIB. If the request fails or returns
+    /// no result, `lines` is left empty and nothing is cached, so a future
+    /// fetch (or the reset button) can retry.
     func loadLyrics(title: String, artist: String, album: String, duration: TimeInterval) {
         let key = cacheKey(title: title, artist: artist)
 
@@ -74,28 +66,31 @@ final class LyricsService: ObservableObject {
             lines = parseLRC(cachedLRC)
             rawLRC = cachedLRC
             isLoading = false
-            fallbackToMock = false
             return
         }
 
         isLoading = true
         lines = []
-        fallbackToMock = false
         rawLRC = ""
 
         Task { [weak self] in
-            let realLRC = await Self.fetchLRCLIBLyrics(title: title, artist: artist)
-            let sourceLRC = realLRC ?? LyricsService.mockLRC
-            let parsed = parseLRC(sourceLRC)
+            guard let realLRC = await Self.fetchLRCLIBLyrics(title: title, artist: artist) else {
+                await MainActor.run {
+                    self?.isLoading = false
+                    self?.pendingKey = nil
+                }
+                return
+            }
+
+            let parsed = parseLRC(realLRC)
 
             await MainActor.run {
                 guard let self else { return }
-                self.cache[key] = sourceLRC
+                self.cache[key] = realLRC
                 self.saveCacheToDisk()
                 self.lines = parsed
-                self.rawLRC = sourceLRC
+                self.rawLRC = realLRC
                 self.isLoading = false
-                self.fallbackToMock = (realLRC == nil)
                 self.pendingKey = nil
             }
         }

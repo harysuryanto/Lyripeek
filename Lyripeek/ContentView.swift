@@ -5,16 +5,12 @@
 //  Created by Hary Suryanto on 24/06/26.
 //
 
-import Combine
 import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var nowPlayingService: NowPlayingService
     @EnvironmentObject private var lyricsService: LyricsService
 
-    @State private var demoMode = false
-    @State private var demoElapsedTime: TimeInterval = 0
-    @State private var demoTimer: AnyCancellable?
     @AppStorage("animateMenuBar") private var animateMenuBar = true
 
     private let offsetStep: TimeInterval = 0.2 // 200 ms in seconds
@@ -26,14 +22,10 @@ struct ContentView: View {
         return formatter
     }()
 
-    private var effectiveElapsedTime: TimeInterval {
-        demoMode ? demoElapsedTime : nowPlayingService.elapsedTime
-    }
-
     private var currentIndex: Int {
         currentLineIndex(
             lines: lyricsService.lines,
-            currentTime: effectiveElapsedTime - lyricsService.offset
+            currentTime: nowPlayingService.elapsedTime - lyricsService.offset
         )
     }
 
@@ -57,16 +49,13 @@ struct ContentView: View {
         }
         .padding()
         .frame(minWidth: 360, minHeight: 480)
-        .onChange(of: demoMode) { _, isDemo in
-            isDemo ? startDemoTimer() : stopDemoTimer()
-        }
-        .onChange(of: effectiveElapsedTime) { _, newTime in
+        .onChange(of: nowPlayingService.elapsedTime) { _, newTime in
             lyricsService.updateCurrentLine(at: newTime)
         }
         .onChange(of: lyricsService.offset) { _, _ in
             // Apply the new offset immediately instead of waiting for the
             // next playback-time tick.
-            lyricsService.updateCurrentLine(at: effectiveElapsedTime)
+            lyricsService.updateCurrentLine(at: nowPlayingService.elapsedTime)
         }
     }
 
@@ -99,11 +88,6 @@ struct ContentView: View {
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .help("Animate menu bar transitions")
-
-            Toggle("Demo", isOn: $demoMode)
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .help("Simulate playback when no music is detected")
         }
     }
 
@@ -114,12 +98,11 @@ struct ContentView: View {
 
     private var displayArtist: String {
         let artist = nowPlayingService.artist
-        return artist.isEmpty ? "Start playback or enable Demo" : artist
+        return artist.isEmpty ? "Start playback" : artist
     }
 
     private var sourceDescription: String {
-        if demoMode { return "Demo source" }
-        return nowPlayingService.sourceDescription
+        nowPlayingService.sourceDescription
     }
 
     // MARK: - Lyrics
@@ -153,14 +136,14 @@ struct ContentView: View {
                 Text("Fetching lyrics…")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } else if lyricsService.fallbackToMock {
-                Text("Real lyrics unavailable — showing test lyrics")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
             } else if !lyricsService.lines.isEmpty {
                 Text("Synced lyrics loaded")
                     .font(.caption)
                     .foregroundStyle(.green)
+            } else if lyricsService.isResetAvailable {
+                Text("No lyrics found for this track")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             } else {
                 EmptyView()
             }
@@ -317,27 +300,6 @@ struct ContentView: View {
         }
 
         return sections.joined(separator: "\n")
-    }
-
-    // MARK: - Helpers
-
-    private func startDemoTimer() {
-        demoElapsedTime = 0
-        demoTimer = Timer.publish(every: 1.0, on: .main, in: .common)
-            .autoconnect()
-            .sink { _ in
-                demoElapsedTime += 1.0
-                // Loop the demo so it stays interesting.
-                if demoElapsedTime > 25 {
-                    demoElapsedTime = 0
-                }
-            }
-    }
-
-    private func stopDemoTimer() {
-        demoTimer?.cancel()
-        demoTimer = nil
-        demoElapsedTime = 0
     }
 }
 
