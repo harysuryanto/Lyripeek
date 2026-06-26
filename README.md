@@ -26,6 +26,21 @@ https://github.com/user-attachments/assets/8e129347-866d-49d7-8ca0-7c0ddc0b4cb1
 - Xcode 17+
 - Swift 5
 
+## Install
+
+Download the latest `Lyripeek.app.zip` from the [Releases](../../releases) page, then:
+
+1. Unzip and drag `Lyripeek.app` into the `/Applications` folder.
+2. Open Terminal and run the following to clear the quarantine attribute. Lyripeek is not signed with an Apple Developer ID because the developer is not enrolled in the Apple Developer Program, so macOS Gatekeeper would otherwise block the app:
+
+   ```bash
+   xattr -cr /Applications/Lyripeek.app
+   ```
+
+3. Launch the app from Finder (or `open /Applications/Lyripeek.app`). It appears as a music-note icon in the menu bar.
+
+On first launch macOS will prompt you to allow Lyripeek to send AppleEvents to other apps (Spotify, Apple Music, Kaset) for the enriched source experience. Click **OK** to grant access.
+
 ## Build & Run
 
 Open `Lyripeek.xcodeproj` in Xcode and run the **Lyripeek** scheme, or build from the command line:
