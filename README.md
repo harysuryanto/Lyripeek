@@ -6,9 +6,9 @@ A lightweight macOS menu-bar app that shows time-synced lyrics for the music you
 
 <!-- TODO: replace these placeholders with real screenshots -->
 
-![Lyrics popover](docs/screenshot-popover.png)
+<img width="451" height="454" alt="Screenshot 2026-06-26 at 11 20 17" src="https://github.com/user-attachments/assets/b66e3435-6245-422d-b711-2df78bab4495" />
 
-![Debug window](docs/screenshot-debug.png)
+https://github.com/user-attachments/assets/8e129347-866d-49d7-8ca0-7c0ddc0b4cb1
 
 ## Features
 
