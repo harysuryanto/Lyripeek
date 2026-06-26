@@ -143,6 +143,19 @@ struct DebugWindow: View {
         sections.append("Apple Music script output:")
         sections.append("  \(nowPlayingService.lastAppleMusicOutput)")
 
+        sections.append("")
+        sections.append("Kaset script output:")
+        sections.append("  \(nowPlayingService.lastKasetOutput)")
+
+        sections.append("")
+        sections.append("Publisher detection:")
+        sections.append("  \(MediaRemoteClient.shared.detectionPathDescription)")
+        if let bundleID = nowPlayingService.sourceBundleIdentifier {
+            sections.append("  Active publisher bundle id: \(bundleID)")
+        } else {
+            sections.append("  Active publisher bundle id: <unknown>")
+        }
+
         return sections.joined(separator: "\n")
     }
 }

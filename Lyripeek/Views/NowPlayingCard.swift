@@ -63,7 +63,7 @@ struct NowPlayingCard: View {
 
     private var displayArtist: String {
         let artist = nowPlayingService.artist
-        return artist.isEmpty ? "Start playback in Spotify or Apple Music" : artist
+        return artist.isEmpty ? "Start playback in a supported music app" : artist
     }
 
     private var subtitle: String {

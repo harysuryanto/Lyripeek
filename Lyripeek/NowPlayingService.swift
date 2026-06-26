@@ -10,12 +10,19 @@ import Combine
 import Foundation
 import MediaPlayer
 
-/// Observes the system's currently playing media.
+/// Observes the system's currently playing media via three layers:
 ///
-/// Primary sources are native desktop players (Spotify, Apple Music) queried
-/// directly via AppleScript, because `MPNowPlayingInfoCenter` does not reliably
-/// expose other apps' data on macOS. `MPNowPlayingInfoCenter` is kept as a
-/// secondary fallback.
+/// 1. **System layer** — `MPNowPlayingInfoCenter` is the always-on primary
+///    source. Any app that publishes to the macOS Now Playing service (the
+///    same one Control Center's Now Playing widget uses) works here.
+/// 2. **Publisher detection** — `MediaRemoteClient` (private `MediaRemote`
+///    framework, `dlsym`-loaded with graceful fallback) reports the bundle id
+///    of the app currently publishing, so we can label unknown apps with a
+///    friendly name and pick a matching `PlayerSource` for enrichment.
+/// 3. **Enrichment overlay** — for known apps (Spotify, Apple Music, Kaset)
+///    we run their AppleScript to overlay a fresh `position` and explicit
+///    source name on top of the system data. The system data is never
+///    replaced — enrichment is additive.
 final class NowPlayingService: ObservableObject {
     @Published private(set) var title: String = ""
     @Published private(set) var artist: String = ""
@@ -23,11 +30,13 @@ final class NowPlayingService: ObservableObject {
     @Published private(set) var duration: TimeInterval = 0
     @Published private(set) var elapsedTime: TimeInterval = 0
     @Published private(set) var sourceDescription: String = ""
+    @Published private(set) var sourceBundleIdentifier: String? = nil
     @Published private(set) var artwork: NSImage?
     @Published private(set) var rawNowPlayingInfo: [String: Any] = [:]
     @Published private(set) var lastAppleScriptError: String = ""
     @Published private(set) var lastSpotifyOutput: String = ""
     @Published private(set) var lastAppleMusicOutput: String = ""
+    @Published private(set) var lastKasetOutput: String = ""
     @Published private(set) var lastParsedElapsedTime: TimeInterval = 0
     @Published private(set) var lastParsedDuration: TimeInterval = 0
 
@@ -36,10 +45,31 @@ final class NowPlayingService: ObservableObject {
         trackChangedSubject.eraseToAnyPublisher()
     }
 
+    /// Exposed for the debug window so it can iterate the registry.
+    let systemSource: SystemNowPlayingPlayerSource
+    let spotifySource: SpotifyPlayerSource
+    let appleMusicSource: AppleMusicPlayerSource
+    let kasetSource: KasetPlayerSource
+
+    private var enrichmentSources: [PlayerSource] {
+        [spotifySource, appleMusicSource, kasetSource]
+    }
+
+    /// Read-only list of all known `PlayerSource` instances (system + the
+    /// three enriched apps). Used by the popover's "Supported Players" bar
+    /// and the debug window.
+    var allSources: [PlayerSource] {
+        [systemSource, spotifySource, appleMusicSource, kasetSource]
+    }
+
     private var cancellables = Set<AnyCancellable>()
     private let trackChangedSubject = PassthroughSubject<(title: String, artist: String, album: String, duration: TimeInterval), Never>()
 
     init() {
+        self.systemSource = SystemNowPlayingPlayerSource()
+        self.spotifySource = SpotifyPlayerSource()
+        self.appleMusicSource = AppleMusicPlayerSource()
+        self.kasetSource = KasetPlayerSource()
         startPolling()
     }
 
@@ -59,195 +89,93 @@ final class NowPlayingService: ObservableObject {
     }
 
     private func refresh() async {
-        // Always read MPNowPlayingInfoCenter for artwork — it's populated by
-        // Spotify, Apple Music, Safari, and most other players, and is the
-        // exact same source the macOS Control Center Now Playing widget uses.
-        // The AppleScript path returns early below, so we must read this
-        // *before* that early return.
-        let nowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        let systemArtwork = Self.makeImage(from: nowPlayingInfo[MPMediaItemPropertyArtwork])
+        // Layer 1: system-wide MPNowPlayingInfoCenter. This is the source of
+        // truth and works for any app that publishes to the system.
+        let systemTrack = await systemSource.currentTrack()
+        let systemArtwork = systemSource.systemArtwork
 
-        // 1. Try desktop music apps directly via AppleScript.
-        if let track = await fetchDesktopPlayerTrack() {
-            await MainActor.run {
-                applyTrack(track, source: track.source)
-                artwork = systemArtwork
-            }
-            return
-        }
+        // Layer 2: figure out which app is currently publishing.
+        let publisherBundleID = MediaRemoteClient.shared.currentPublisherBundleIdentifier()
+        let publisherDisplayName = MediaRemoteClient.shared.currentPublisherDisplayName()
 
-        // 2. Fall back to MPNowPlayingInfoCenter.
-        let info = nowPlayingInfo
+        // Layer 3a: try to overlay enrichment data from the detected publisher's
+        // known source. Only adopt the overlay if it's actively playing, or if
+        // we don't have any system data — a paused overlay would otherwise
+        // mask a different app that's currently playing.
+        var resolvedTrack: DesktopTrack? = systemTrack
+        var overlayBundleID: String? = publisherBundleID
 
-        let newTitle = normalizeMetadata(info[MPMediaItemPropertyTitle] as? String ?? "")
-        let newArtist = normalizeMetadata(info[MPMediaItemPropertyArtist] as? String ?? "")
-        let newAlbum = normalizeMetadata(info[MPMediaItemPropertyAlbumTitle] as? String ?? "")
-        let newDuration = info[MPMediaItemPropertyPlaybackDuration] as? TimeInterval ?? 0
-        let rawElapsed = info[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? TimeInterval ?? 0
-        let rate = info[MPNowPlayingInfoPropertyPlaybackRate] as? Double ?? 1
-
-        await MainActor.run {
-            rawNowPlayingInfo = info
-
-            if !newTitle.isEmpty || !newArtist.isEmpty {
-                applyTrack(
-                    DesktopTrack(
-                        title: newTitle,
-                        artist: newArtist,
-                        album: newAlbum,
-                        duration: newDuration,
-                        elapsedTime: rawElapsed,
-                        playbackRate: rate,
-                        source: "Now Playing"
-                    ),
-                    source: "Now Playing"
-                )
-                artwork = systemArtwork
+        if let publisherBundleID,
+           let match = enrichmentSources.first(where: { $0.bundleIdentifier == publisherBundleID }),
+           let overlay = await match.currentTrack() {
+            if !overlay.isPaused || resolvedTrack == nil {
+                resolvedTrack = overlay
             } else {
-                clearTrack()
+                // Detected publisher is paused; fall through and look for an
+                // actively-playing known source.
+                overlayBundleID = nil
             }
         }
-    }
 
-    // MARK: - Desktop player AppleScript
-
-    private func fetchDesktopPlayerTrack() async -> DesktopTrack? {
-        let spotify = await runAppleScript(Self.spotifyScript) ?? ""
-        lastSpotifyOutput = spotify.isEmpty ? "<empty>" : spotify
-        if let track = parseDesktopPlayerOutput(spotify, source: "Spotify") {
-            return track
-        }
-
-        let music = await runAppleScript(Self.appleMusicScript) ?? ""
-        lastAppleMusicOutput = music.isEmpty ? "<empty>" : music
-        if let track = parseDesktopPlayerOutput(music, source: "Apple Music") {
-            return track
-        }
-
-        return nil
-    }
-
-    private static let spotifyScript = """
-    tell application "Spotify"
-        if it is running then
-            try
-                set trackName to name of current track
-                set trackArtist to artist of current track
-                set trackAlbum to album of current track
-                set trackDuration to (duration of current track) / 1000
-                set trackPosition to player position
-                if player state is playing then
-                    return trackName & "|" & trackArtist & "|" & trackAlbum & "|" & trackDuration & "|" & trackPosition
-                else
-                    return "PAUSED:" & trackName & "|" & trackArtist & "|" & trackAlbum & "|" & trackDuration & "|" & trackPosition
-                end if
-            end try
-        end if
-    end tell
-    return ""
-    """
-
-    private static let appleMusicScript = """
-    tell application "Music"
-        if it is running then
-            try
-                set trackName to name of current track
-                set trackArtist to artist of current track
-                set trackAlbum to album of current track
-                set trackDuration to duration of current track
-                set trackPosition to player position
-                if player state is playing then
-                    return trackName & "|" & trackArtist & "|" & trackAlbum & "|" & trackDuration & "|" & trackPosition
-                else
-                    return "PAUSED:" & trackName & "|" & trackArtist & "|" & trackAlbum & "|" & trackDuration & "|" & trackPosition
-                end if
-            end try
-        end if
-    end tell
-    return ""
-    """
-
-    private func parseDesktopPlayerOutput(_ output: String, source: String) -> DesktopTrack? {
-        var trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-
-        if trimmed.hasPrefix("PAUSED:") {
-            trimmed = String(trimmed.dropFirst(7))
-        }
-
-        let parts = trimmed.components(separatedBy: "|")
-        guard parts.count >= 5 else { return nil }
-
-        let title = normalizeMetadata(parts[0])
-        let artist = normalizeMetadata(parts[1])
-        let album = normalizeMetadata(parts[2])
-        let duration = parseTimeInterval(parts[3])
-        let elapsed = parseTimeInterval(parts[4])
-
-        guard !title.isEmpty || !artist.isEmpty else { return nil }
-
-        return DesktopTrack(
-            title: title,
-            artist: artist,
-            album: album,
-            duration: duration,
-            elapsedTime: elapsed,
-            playbackRate: 1,
-            source: source
-        )
-    }
-
-    private func parseTimeInterval(_ value: String) -> TimeInterval {
-        let normalized = value.trimmingCharacters(in: .whitespaces)
-            .replacingOccurrences(of: ",", with: ".")
-        return TimeInterval(normalized) ?? 0
-    }
-
-    private func runAppleScript(_ script: String) async -> String? {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-                process.arguments = ["-e", script]
-
-                let outputPipe = Pipe()
-                let errorPipe = Pipe()
-                process.standardOutput = outputPipe
-                process.standardError = errorPipe
-
-                do {
-                    try process.run()
-                    process.waitUntilExit()
-
-                    let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-                    let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-                    let output = String(data: outputData, encoding: .utf8) ?? ""
-                    let error = String(data: errorData, encoding: .utf8) ?? ""
-
-                    DispatchQueue.main.async { [weak self] in
-                        if process.terminationStatus == 0 {
-                            self?.lastAppleScriptError = ""
-                            continuation.resume(
-                                returning: output.trimmingCharacters(in: .whitespacesAndNewlines)
-                            )
-                        } else {
-                            self?.lastAppleScriptError = error.isEmpty ? output : error
-                            continuation.resume(returning: nil)
-                        }
-                    }
-                } catch {
-                    DispatchQueue.main.async { [weak self] in
-                        self?.lastAppleScriptError = error.localizedDescription
-                        continuation.resume(returning: nil)
-                    }
+        // Layer 3b: if the detected publisher is paused (or unknown) and we
+        // don't have a non-paused system track, scan every known source and
+        // adopt the first one that is actively playing.
+        let haveActiveTrack = resolvedTrack.map { !$0.isPaused } ?? false
+        if !haveActiveTrack {
+            for source in enrichmentSources where source.bundleIdentifier != publisherBundleID {
+                if let candidate = await source.currentTrack(), !candidate.isPaused {
+                    resolvedTrack = candidate
+                    overlayBundleID = source.bundleIdentifier
+                    break
                 }
             }
+        }
+
+        await MainActor.run {
+            rawNowPlayingInfo = systemSource.rawNowPlayingInfo
+            lastAppleScriptError = [
+                spotifySource.lastError,
+                appleMusicSource.lastError,
+                kasetSource.lastError,
+            ]
+            .first(where: { !$0.isEmpty }) ?? ""
+
+            lastSpotifyOutput = spotifySource.lastOutput
+            lastAppleMusicOutput = appleMusicSource.lastOutput
+            lastKasetOutput = kasetSource.lastOutput
+
+            guard let track = resolvedTrack else {
+                clearTrack()
+                return
+            }
+
+            let resolvedSource: String
+            if track.source != "Now Playing" {
+                resolvedSource = track.source
+            } else {
+                resolvedSource = publisherDisplayName
+            }
+
+            applyTrack(
+                DesktopTrack(
+                    title: track.title,
+                    artist: track.artist,
+                    album: track.album,
+                    duration: track.duration,
+                    elapsedTime: track.elapsedTime,
+                    playbackRate: track.playbackRate,
+                    source: resolvedSource,
+                    bundleIdentifier: overlayBundleID ?? track.bundleIdentifier,
+                    isPaused: track.isPaused
+                ),
+                artwork: systemArtwork
+            )
         }
     }
 
     // MARK: - Track state
 
-    private func applyTrack(_ track: DesktopTrack, source: String) {
+    private func applyTrack(_ track: DesktopTrack, artwork: NSImage?) {
         let newTitle = track.title
         let newArtist = track.artist
         let newAlbum = track.album
@@ -261,7 +189,9 @@ final class NowPlayingService: ObservableObject {
         elapsedTime = track.elapsedTime
         lastParsedDuration = track.duration
         lastParsedElapsedTime = track.elapsedTime
-        sourceDescription = source
+        sourceDescription = track.source
+        sourceBundleIdentifier = track.bundleIdentifier
+        self.artwork = artwork
 
         if trackDidChange && (!newTitle.isEmpty || !newArtist.isEmpty) {
             trackChangedSubject.send((title: newTitle, artist: newArtist, album: newAlbum, duration: track.duration))
@@ -275,46 +205,7 @@ final class NowPlayingService: ObservableObject {
         duration = 0
         elapsedTime = 0
         sourceDescription = ""
+        sourceBundleIdentifier = nil
         artwork = nil
     }
-
-    private func normalizeMetadata(_ value: String) -> String {
-        var result = value.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let noisePatterns = [
-            "(Official Video)",
-            "(Official Music Video)",
-            "(Lyrics)",
-            "(Lyric Video)",
-            "(Audio)",
-            "(Visualizer)",
-            "- Official Video",
-            "- Official Music Video",
-        ]
-
-        for pattern in noisePatterns {
-            result = result.replacingOccurrences(of: pattern, with: "")
-        }
-
-        return result.trimmingCharacters(in: .whitespaces)
-    }
-
-    /// Renders the system-provided `MPMediaItemArtwork` (the same one shown in
-    /// the macOS Control Center Now Playing widget) into an `NSImage`.
-    nonisolated private static let artworkRenderSize = CGSize(width: 600, height: 600)
-
-    nonisolated private static func makeImage(from raw: Any?) -> NSImage? {
-        guard let artwork = raw as? MPMediaItemArtwork else { return nil }
-        return artwork.image(at: artworkRenderSize)
-    }
-}
-
-private struct DesktopTrack {
-    let title: String
-    let artist: String
-    let album: String
-    let duration: TimeInterval
-    let elapsedTime: TimeInterval
-    let playbackRate: Double
-    let source: String
 }

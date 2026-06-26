@@ -29,6 +29,11 @@ struct ContentView: View {
 
             Divider()
 
+            SupportedPlayersBar()
+                .environmentObject(nowPlayingService)
+
+            Divider()
+
             PopoverFooter(onOpenDebug: onOpenDebug, onQuit: onQuit)
                 .environmentObject(lyricsService)
         }
