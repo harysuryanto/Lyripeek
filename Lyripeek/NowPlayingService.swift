@@ -5,6 +5,7 @@
 //  Created by Hary Suryanto on 24/06/26.
 //
 
+import AppKit
 import Combine
 import Foundation
 import MediaPlayer
@@ -22,6 +23,7 @@ final class NowPlayingService: ObservableObject {
     @Published private(set) var duration: TimeInterval = 0
     @Published private(set) var elapsedTime: TimeInterval = 0
     @Published private(set) var sourceDescription: String = ""
+    @Published private(set) var artwork: NSImage?
     @Published private(set) var rawNowPlayingInfo: [String: Any] = [:]
     @Published private(set) var lastAppleScriptError: String = ""
     @Published private(set) var lastSpotifyOutput: String = ""
@@ -57,16 +59,25 @@ final class NowPlayingService: ObservableObject {
     }
 
     private func refresh() async {
+        // Always read MPNowPlayingInfoCenter for artwork — it's populated by
+        // Spotify, Apple Music, Safari, and most other players, and is the
+        // exact same source the macOS Control Center Now Playing widget uses.
+        // The AppleScript path returns early below, so we must read this
+        // *before* that early return.
+        let nowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        let systemArtwork = Self.makeImage(from: nowPlayingInfo[MPMediaItemPropertyArtwork])
+
         // 1. Try desktop music apps directly via AppleScript.
         if let track = await fetchDesktopPlayerTrack() {
             await MainActor.run {
                 applyTrack(track, source: track.source)
+                artwork = systemArtwork
             }
             return
         }
 
         // 2. Fall back to MPNowPlayingInfoCenter.
-        let info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        let info = nowPlayingInfo
 
         let newTitle = normalizeMetadata(info[MPMediaItemPropertyTitle] as? String ?? "")
         let newArtist = normalizeMetadata(info[MPMediaItemPropertyArtist] as? String ?? "")
@@ -91,6 +102,7 @@ final class NowPlayingService: ObservableObject {
                     ),
                     source: "Now Playing"
                 )
+                artwork = systemArtwork
             } else {
                 clearTrack()
             }
@@ -263,6 +275,7 @@ final class NowPlayingService: ObservableObject {
         duration = 0
         elapsedTime = 0
         sourceDescription = ""
+        artwork = nil
     }
 
     private func normalizeMetadata(_ value: String) -> String {
@@ -284,6 +297,15 @@ final class NowPlayingService: ObservableObject {
         }
 
         return result.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Renders the system-provided `MPMediaItemArtwork` (the same one shown in
+    /// the macOS Control Center Now Playing widget) into an `NSImage`.
+    nonisolated private static let artworkRenderSize = CGSize(width: 600, height: 600)
+
+    nonisolated private static func makeImage(from raw: Any?) -> NSImage? {
+        guard let artwork = raw as? MPMediaItemArtwork else { return nil }
+        return artwork.image(at: artworkRenderSize)
     }
 }
 

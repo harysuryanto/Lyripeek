@@ -7,6 +7,7 @@ import AppKit
 
 final class CrossfadeStatusView: NSView {
     var onClick: (() -> Void)?
+    var onRightClick: ((NSEvent) -> Void)?
     var onContentResize: (() -> Void)?
 
     var icon: NSImage? {
@@ -199,6 +200,6 @@ final class CrossfadeStatusView: NSView {
 
     override func rightMouseUp(with event: NSEvent) {
         super.rightMouseUp(with: event)
-        onClick?()
+        onRightClick?(event)
     }
 }

@@ -2,6 +2,14 @@
 
 A lightweight macOS menu-bar app that shows time-synced lyrics for the music you're currently playing.
 
+## Screenshots
+
+<!-- TODO: replace these placeholders with real screenshots -->
+
+![Lyrics popover](docs/screenshot-popover.png)
+
+![Debug window](docs/screenshot-debug.png)
+
 ## Features
 
 - **Menu-bar lyrics** – see the current line right in the macOS menu bar.

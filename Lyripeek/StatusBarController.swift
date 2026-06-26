@@ -16,11 +16,19 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     private var statusView: CrossfadeStatusView?
     private var popover: NSPopover?
     private var lyricsService: LyricsService?
+    private var nowPlayingService: NowPlayingService?
+    private var artworkService: ArtworkService?
     private var isPopoverOpen = false
     private var cancellables = Set<AnyCancellable>()
 
-    func configure(nowPlayingService: NowPlayingService, lyricsService: LyricsService) {
+    func configure(
+        nowPlayingService: NowPlayingService,
+        lyricsService: LyricsService,
+        artworkService: ArtworkService
+    ) {
         self.lyricsService = lyricsService
+        self.nowPlayingService = nowPlayingService
+        self.artworkService = artworkService
 
         let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
@@ -32,6 +40,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         statusView.onClick = { [weak self] in
             self?.togglePopover()
         }
+        statusView.onRightClick = { [weak self] event in
+            self?.showContextMenu(from: event)
+        }
         statusView.onContentResize = { [weak self] in
             guard let self, !self.isPopoverOpen else { return }
             let targetWidth = self.statusView?.intrinsicContentSize.width ?? NSStatusItem.variableLength
@@ -42,13 +53,21 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         self.statusView = statusView
 
         let popover = NSPopover()
-        popover.contentSize = NSSize(width: 360, height: 480)
+        popover.contentSize = NSSize(width: 420, height: 400)
         popover.behavior = .transient
         popover.delegate = self
         popover.contentViewController = NSHostingController(
-            rootView: ContentView()
+            rootView: ContentView(
+                onOpenDebug: { [weak self] in
+                    self?.openDebugWindow()
+                },
+                onQuit: { [weak self] in
+                    self?.quit()
+                }
+            )
                 .environmentObject(nowPlayingService)
                 .environmentObject(lyricsService)
+                .environmentObject(artworkService)
         )
 
         self.statusItem = statusItem
@@ -85,8 +104,53 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             statusItem?.length = statusView.frame.width
 
             popover.show(relativeTo: statusView.bounds, of: statusView, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
+            if let window = popover.contentViewController?.view.window {
+                window.makeKey()
+                // Make the popover key (so it accepts input) but don't let
+                // AppKit auto-focus the first focusable view (the offset
+                // TextField). The user can still click into it.
+                window.makeFirstResponder(nil)
+            }
         }
+    }
+
+    private func openDebugWindow() {
+        guard let nowPlayingService, let lyricsService else { return }
+        DebugWindowPresenter.present(
+            nowPlayingService: nowPlayingService,
+            lyricsService: lyricsService
+        )
+    }
+
+    // MARK: - Context menu (right-click)
+
+    private lazy var contextMenu: NSMenu = {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        let quitItem = NSMenuItem(
+            title: "Quit Lyripeek",
+            action: #selector(menuQuit),
+            keyEquivalent: "q"
+        )
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        return menu
+    }()
+
+    private func showContextMenu(from event: NSEvent) {
+        guard let statusView else { return }
+        let location = statusView.convert(event.locationInWindow, from: nil)
+        contextMenu.popUp(positioning: nil, at: location, in: statusView)
+    }
+
+    @objc private func menuQuit() {
+        quit()
+    }
+
+    func quit() {
+        NSApplication.shared.terminate(nil)
     }
 
     // MARK: - NSPopoverDelegate

@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusBarController = StatusBarController()
     private let nowPlayingService = NowPlayingService()
     private let lyricsService = LyricsService()
+    private let artworkService = ArtworkService()
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -30,14 +31,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "animateMenuBar": true
         ])
 
-        // Load lyrics as soon as the playing track changes.
+        // Load lyrics and artwork as soon as the playing track changes.
         nowPlayingService.trackChangedPublisher
             .sink { [weak self] track in
-                self?.lyricsService.loadLyrics(
+                guard let self else { return }
+                self.lyricsService.loadLyrics(
                     title: track.title,
                     artist: track.artist,
                     album: track.album,
                     duration: track.duration
+                )
+                self.artworkService.load(
+                    title: track.title,
+                    artist: track.artist
                 )
             }
             .store(in: &cancellables)
@@ -62,7 +68,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusBarController.configure(
             nowPlayingService: nowPlayingService,
-            lyricsService: lyricsService
+            lyricsService: lyricsService,
+            artworkService: artworkService
         )
     }
 }
