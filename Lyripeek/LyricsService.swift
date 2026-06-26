@@ -34,10 +34,21 @@ final class LyricsService: ObservableObject {
 
     init() {
         self.offset = UserDefaults.standard.double(forKey: Self.offsetDefaultsKey)
+        loadCacheFromDisk()
     }
 
-    private var cache: [String: [LyricLine]] = [:]
+    /// Raw-LRC cache keyed by `artist - title`. The raw LRC is cached (not the
+    /// parsed `[LyricLine]`) so that `LyricLine.id` (a `UUID`) stays stable
+    /// only for the duration of a parse, and re-parse cost is negligible.
+    private var cache: [String: String] = [:]
     private var pendingKey: String?
+    private var currentTrack: (title: String, artist: String, album: String, duration: TimeInterval)?
+
+    /// True when there is an active track whose cache entry can be reset.
+    var isResetAvailable: Bool { currentTrack != nil }
+
+    private static let cacheDirectoryName = "Lyripeek"
+    private static let cacheFileName = "lyrics-cache.json"
 
     /// Hardcoded mock LRC used as a fallback.
     private static let mockLRC = """
@@ -46,18 +57,22 @@ final class LyricsService: ObservableObject {
     [00:15.00]Line three
     """
 
-    /// Loads lyrics for the given track. Results are cached by `artist + title`.
+    /// Loads lyrics for the given track. Results are cached on disk by
+    /// `artist + title`.
     ///
     /// First attempts to fetch real synced lyrics from LRCLIB. If that fails or
     /// returns nothing, the mock LRC is used and `fallbackToMock` is set.
     func loadLyrics(title: String, artist: String, album: String, duration: TimeInterval) {
         let key = cacheKey(title: title, artist: artist)
 
+        currentTrack = (title: title, artist: artist, album: album, duration: duration)
+
         guard key != pendingKey else { return }
         pendingKey = key
 
-        if let cached = cache[key] {
-            lines = cached
+        if let cachedLRC = cache[key] {
+            lines = parseLRC(cachedLRC)
+            rawLRC = cachedLRC
             isLoading = false
             fallbackToMock = false
             return
@@ -74,14 +89,66 @@ final class LyricsService: ObservableObject {
             let parsed = parseLRC(sourceLRC)
 
             await MainActor.run {
-                self?.cache[key] = parsed
-                self?.lines = parsed
-                self?.rawLRC = sourceLRC
-                self?.isLoading = false
-                self?.fallbackToMock = (realLRC == nil)
-                self?.pendingKey = nil
+                guard let self else { return }
+                self.cache[key] = sourceLRC
+                self.saveCacheToDisk()
+                self.lines = parsed
+                self.rawLRC = sourceLRC
+                self.isLoading = false
+                self.fallbackToMock = (realLRC == nil)
+                self.pendingKey = nil
             }
         }
+    }
+
+    /// Evicts the current track from both the in-memory and on-disk cache, then
+    /// re-triggers a fresh fetch. No-op if no track is active.
+    func resetCurrentLyrics() {
+        guard let track = currentTrack else { return }
+        let key = cacheKey(title: track.title, artist: track.artist)
+
+        cache.removeValue(forKey: key)
+        saveCacheToDisk()
+
+        pendingKey = nil
+        loadLyrics(
+            title: track.title,
+            artist: track.artist,
+            album: track.album,
+            duration: track.duration
+        )
+    }
+
+    // MARK: - Disk cache
+
+    private func cacheFileURL() -> URL? {
+        guard let base = try? FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        ) else { return nil }
+
+        let directory = base.appendingPathComponent(Self.cacheDirectoryName, isDirectory: true)
+        if !FileManager.default.fileExists(atPath: directory.path) {
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        return directory.appendingPathComponent(Self.cacheFileName)
+    }
+
+    private func loadCacheFromDisk() {
+        guard let url = cacheFileURL(),
+              let data = try? Data(contentsOf: url),
+              let decoded = try? JSONDecoder().decode([String: String].self, from: data) else {
+            return
+        }
+        cache = decoded
+    }
+
+    private func saveCacheToDisk() {
+        guard let url = cacheFileURL(),
+              let data = try? JSONEncoder().encode(cache) else { return }
+        try? data.write(to: url, options: [.atomic])
     }
 
     // MARK: - LRCLIB API

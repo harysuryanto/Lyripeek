@@ -205,6 +205,20 @@ struct ContentView: View {
             Text("ms")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            Spacer(minLength: 8)
+
+            Button {
+                lyricsService.resetCurrentLyrics()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.caption)
+                    .frame(width: 12, height: 12)
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .disabled(lyricsService.isLoading || !lyricsService.isResetAvailable)
+            .help("Refetch lyrics (clears cache for this track)")
         }
         .padding(.bottom, 4)
     }
