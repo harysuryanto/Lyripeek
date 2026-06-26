@@ -18,6 +18,12 @@ final class LyricsService: ObservableObject {
     @Published private(set) var isLoading: Bool = false
     @Published private(set) var fallbackToMock: Bool = false
     @Published private(set) var rawLRC: String = ""
+    @Published private(set) var currentLineText: String = ""
+
+    /// Playback time offset applied when looking up the active lyric line.
+    /// Positive values delay lyrics; negative values make them appear earlier.
+    /// Stored in seconds; the UI presents the value in milliseconds.
+    @Published var offset: TimeInterval = 0
 
     private var cache: [String: [LyricLine]] = [:]
     private var pendingKey: String?
@@ -96,6 +102,17 @@ final class LyricsService: ObservableObject {
         } catch {
             return nil
         }
+    }
+
+    /// Updates `currentLineText` to the lyric line active at `time`, taking
+    /// the user-adjustable `offset` into account.
+    func updateCurrentLine(at time: TimeInterval) {
+        let index = currentLineIndex(lines: lines, currentTime: time - offset)
+        guard lines.indices.contains(index) else {
+            currentLineText = ""
+            return
+        }
+        currentLineText = lines[index].text
     }
 
     private func cacheKey(title: String, artist: String) -> String {

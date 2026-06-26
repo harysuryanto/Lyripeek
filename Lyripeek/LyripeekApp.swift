@@ -5,20 +5,60 @@
 //  Created by Hary Suryanto on 24/06/26.
 //
 
+import Combine
 import SwiftUI
 
 @main
 struct LyripeekApp: App {
-    @StateObject private var nowPlayingService = NowPlayingService()
-    @StateObject private var lyricsService = LyricsService()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        MenuBarExtra("Lyripeek", systemImage: "music.note.list") {
-            ContentView()
-                .environmentObject(nowPlayingService)
-                .environmentObject(lyricsService)
-                .frame(minWidth: 360, minHeight: 480)
+        Settings {
+            EmptyView()
         }
-        .menuBarExtraStyle(.window)
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let statusBarController = StatusBarController()
+    private let nowPlayingService = NowPlayingService()
+    private let lyricsService = LyricsService()
+    private var cancellables = Set<AnyCancellable>()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Load lyrics as soon as the playing track changes.
+        nowPlayingService.trackChangedPublisher
+            .sink { [weak self] track in
+                self?.lyricsService.loadLyrics(
+                    title: track.title,
+                    artist: track.artist,
+                    album: track.album,
+                    duration: track.duration
+                )
+            }
+            .store(in: &cancellables)
+
+        // Keep the menu-bar lyric line in sync with playback time, even when
+        // the popover is closed.
+        nowPlayingService.$elapsedTime
+            .sink { [weak self] time in
+                self?.lyricsService.updateCurrentLine(at: time)
+            }
+            .store(in: &cancellables)
+
+        // When lyrics load after the current time is already known, pick the
+        // correct line immediately.
+        lyricsService.$lines
+            .sink { [weak self] _ in
+                self?.lyricsService.updateCurrentLine(
+                    at: self?.nowPlayingService.elapsedTime ?? 0
+                )
+            }
+            .store(in: &cancellables)
+
+        statusBarController.configure(
+            nowPlayingService: nowPlayingService,
+            lyricsService: lyricsService
+        )
     }
 }

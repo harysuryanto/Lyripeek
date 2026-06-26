@@ -118,14 +118,18 @@ final class NowPlayingService: ObservableObject {
     private static let spotifyScript = """
     tell application "Spotify"
         if it is running then
-            if player state is playing then
+            try
                 set trackName to name of current track
                 set trackArtist to artist of current track
                 set trackAlbum to album of current track
                 set trackDuration to (duration of current track) / 1000
                 set trackPosition to player position
-                return trackName & "|" & trackArtist & "|" & trackAlbum & "|" & trackDuration & "|" & trackPosition
-            end if
+                if player state is playing then
+                    return trackName & "|" & trackArtist & "|" & trackAlbum & "|" & trackDuration & "|" & trackPosition
+                else
+                    return "PAUSED:" & trackName & "|" & trackArtist & "|" & trackAlbum & "|" & trackDuration & "|" & trackPosition
+                end if
+            end try
         end if
     end tell
     return ""
@@ -134,22 +138,30 @@ final class NowPlayingService: ObservableObject {
     private static let appleMusicScript = """
     tell application "Music"
         if it is running then
-            if player state is playing then
+            try
                 set trackName to name of current track
                 set trackArtist to artist of current track
                 set trackAlbum to album of current track
                 set trackDuration to duration of current track
                 set trackPosition to player position
-                return trackName & "|" & trackArtist & "|" & trackAlbum & "|" & trackDuration & "|" & trackPosition
-            end if
+                if player state is playing then
+                    return trackName & "|" & trackArtist & "|" & trackAlbum & "|" & trackDuration & "|" & trackPosition
+                else
+                    return "PAUSED:" & trackName & "|" & trackArtist & "|" & trackAlbum & "|" & trackDuration & "|" & trackPosition
+                end if
+            end try
         end if
     end tell
     return ""
     """
 
     private func parseDesktopPlayerOutput(_ output: String, source: String) -> DesktopTrack? {
-        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        var trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
+
+        if trimmed.hasPrefix("PAUSED:") {
+            trimmed = String(trimmed.dropFirst(7))
+        }
 
         let parts = trimmed.components(separatedBy: "|")
         guard parts.count >= 5 else { return nil }

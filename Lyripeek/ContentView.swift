@@ -16,12 +16,31 @@ struct ContentView: View {
     @State private var demoElapsedTime: TimeInterval = 0
     @State private var demoTimer: AnyCancellable?
 
+    private let offsetStep: TimeInterval = 0.2 // 200 ms in seconds
+    private let offsetFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 1
+        formatter.maximumFractionDigits = 1
+        return formatter
+    }()
+
     private var effectiveElapsedTime: TimeInterval {
         demoMode ? demoElapsedTime : nowPlayingService.elapsedTime
     }
 
     private var currentIndex: Int {
-        currentLineIndex(lines: lyricsService.lines, currentTime: effectiveElapsedTime)
+        currentLineIndex(
+            lines: lyricsService.lines,
+            currentTime: effectiveElapsedTime - lyricsService.offset
+        )
+    }
+
+    private var offsetMillis: Binding<Double> {
+        Binding(
+            get: { lyricsService.offset * 1000 },
+            set: { lyricsService.offset = $0 / 1000 }
+        )
     }
 
     var body: some View {
@@ -37,17 +56,16 @@ struct ContentView: View {
         }
         .padding()
         .frame(minWidth: 360, minHeight: 480)
-        .onAppear(perform: loadLyricsForCurrentTrack)
-        .onReceive(nowPlayingService.trackChangedPublisher) { track in
-            lyricsService.loadLyrics(
-                title: track.title,
-                artist: track.artist,
-                album: track.album,
-                duration: track.duration
-            )
-        }
         .onChange(of: demoMode) { _, isDemo in
             isDemo ? startDemoTimer() : stopDemoTimer()
+        }
+        .onChange(of: effectiveElapsedTime) { _, newTime in
+            lyricsService.updateCurrentLine(at: newTime)
+        }
+        .onChange(of: lyricsService.offset) { _, _ in
+            // Apply the new offset immediately instead of waiting for the
+            // next playback-time tick.
+            lyricsService.updateCurrentLine(at: effectiveElapsedTime)
         }
     }
 
@@ -106,6 +124,8 @@ struct ContentView: View {
             lyricsStatusLabel
                 .padding(.bottom, 4)
 
+            offsetControl
+
             if lyricsService.isLoading {
                 Spacer()
                 ProgressView("Loading lyrics…")
@@ -141,16 +161,58 @@ struct ContentView: View {
         }
     }
 
+    private var offsetControl: some View {
+        HStack(spacing: 6) {
+            Text("Offset")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Button {
+                lyricsService.offset -= offsetStep
+            } label: {
+                Image(systemName: "minus")
+                    .font(.caption)
+                    .frame(width: 12, height: 12)
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .disabled(lyricsService.lines.isEmpty)
+
+            TextField("Offset", value: offsetMillis, formatter: offsetFormatter)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 58)
+                .multilineTextAlignment(.trailing)
+                .controlSize(.small)
+                .disabled(lyricsService.lines.isEmpty)
+
+            Button {
+                lyricsService.offset += offsetStep
+            } label: {
+                Image(systemName: "plus")
+                    .font(.caption)
+                    .frame(width: 12, height: 12)
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .disabled(lyricsService.lines.isEmpty)
+
+            Text("ms")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.bottom, 4)
+    }
+
     private var lyricsList: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 12) {
+                VStack(spacing: 12) {
                     ForEach(Array(lyricsService.lines.enumerated()), id: \.element.id) { index, line in
                         lyricLineView(line: line, index: index)
-                            .id(line.id)
                     }
                 }
                 .padding(.vertical, 8)
+                .animation(.easeInOut(duration: 0.35), value: currentIndex)
             }
             .onChange(of: currentIndex) { _, newIndex in
                 guard lyricsService.lines.indices.contains(newIndex) else { return }
@@ -162,26 +224,15 @@ struct ContentView: View {
     }
 
     private func lyricLineView(line: LyricLine, index: Int) -> some View {
-        Text(line.text)
-            .font(.system(size: 15, weight: weight(for: index)))
-            .foregroundStyle(color(for: index))
+        let isCurrent = index == currentIndex
+
+        return Text(line.text)
+            .font(.system(size: 15, weight: isCurrent ? .bold : .regular))
+            .foregroundColor(isCurrent ? .accentColor : .primary)
+            .opacity(isCurrent ? 1.0 : (index < currentIndex ? 0.45 : 0.7))
             .frame(maxWidth: .infinity, alignment: .center)
             .multilineTextAlignment(.center)
             .padding(.horizontal, 4)
-    }
-
-    private func weight(for index: Int) -> Font.Weight {
-        index == currentIndex ? .bold : .regular
-    }
-
-    private func color(for index: Int) -> Color {
-        if index == currentIndex {
-            return .accentColor
-        } else if index < currentIndex {
-            return .secondary.opacity(0.55)
-        } else {
-            return .primary.opacity(0.85)
-        }
     }
 
     // MARK: - Debug
@@ -249,15 +300,6 @@ struct ContentView: View {
     }
 
     // MARK: - Helpers
-
-    private func loadLyricsForCurrentTrack() {
-        lyricsService.loadLyrics(
-            title: nowPlayingService.title,
-            artist: nowPlayingService.artist,
-            album: nowPlayingService.album,
-            duration: nowPlayingService.duration
-        )
-    }
 
     private func startDemoTimer() {
         demoElapsedTime = 0
