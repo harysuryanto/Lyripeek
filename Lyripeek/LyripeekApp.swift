@@ -26,6 +26,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UserDefaults.standard.register(defaults: [
+            "animateMenuBar": true
+        ])
+
         // Load lyrics as soon as the playing track changes.
         nowPlayingService.trackChangedPublisher
             .sink { [weak self] track in

@@ -13,6 +13,7 @@ import SwiftUI
 /// menu bar and toggles the lyrics popover on click.
 final class StatusBarController: NSObject, NSPopoverDelegate {
     private var statusItem: NSStatusItem?
+    private var statusView: CrossfadeStatusView?
     private var popover: NSPopover?
     private var lyricsService: LyricsService?
     private var isPopoverOpen = false
@@ -23,17 +24,22 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
         let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
-        if let button = statusItem.button {
-            button.image = NSImage(
-                systemSymbolName: "music.note.list",
-                accessibilityDescription: "Lyripeek"
-            )
-            button.imagePosition = .imageLeft
-            button.lineBreakMode = .byTruncatingTail
-            button.action = #selector(togglePopover)
-            button.target = self
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        let statusView = CrossfadeStatusView()
+        statusView.icon = NSImage(
+            systemSymbolName: "music.note.list",
+            accessibilityDescription: "Lyripeek"
+        )
+        statusView.onClick = { [weak self] in
+            self?.togglePopover()
         }
+        statusView.onContentResize = { [weak self] in
+            guard let self, !self.isPopoverOpen else { return }
+            let targetWidth = self.statusView?.intrinsicContentSize.width ?? NSStatusItem.variableLength
+            self.statusItem?.length = NSStatusItem.variableLength
+            self.statusItem?.length = targetWidth
+        }
+        statusItem.view = statusView
+        self.statusView = statusView
 
         let popover = NSPopover()
         popover.contentSize = NSSize(width: 360, height: 480)
@@ -58,33 +64,27 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     }
 
     private func updateMenuBarTitle(isLoading: Bool, lineText: String) {
-        guard let button = statusItem?.button else { return }
+        guard let statusView else { return }
 
         if isLoading {
-            button.title = "Fetching lyrics…"
-            if !isPopoverOpen { statusItem?.length = NSStatusItem.variableLength }
+            statusView.text = "Fetching lyrics…"
         } else if lineText.isEmpty {
-            button.title = ""
-            if !isPopoverOpen { statusItem?.length = NSStatusItem.squareLength }
+            statusView.text = ""
         } else {
-            button.title = lineText
-            if !isPopoverOpen { statusItem?.length = NSStatusItem.variableLength }
+            statusView.text = lineText
         }
     }
 
-    @objc private func togglePopover() {
-        guard let button = statusItem?.button, let popover else { return }
+    private func togglePopover() {
+        guard let statusView, let popover else { return }
 
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            // Freeze the status item width while the popover is open so that
-            // changing menu-bar lyric text cannot shift the popover.
             isPopoverOpen = true
-            statusItem?.length = button.frame.width
+            statusItem?.length = statusView.frame.width
 
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            // Keep the popover positioned under the menu bar item while visible.
+            popover.show(relativeTo: statusView.bounds, of: statusView, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
     }

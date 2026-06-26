@@ -15,6 +15,7 @@ struct ContentView: View {
     @State private var demoMode = false
     @State private var demoElapsedTime: TimeInterval = 0
     @State private var demoTimer: AnyCancellable?
+    @AppStorage("animateMenuBar") private var animateMenuBar = true
 
     private let offsetStep: TimeInterval = 0.2 // 200 ms in seconds
     private let offsetFormatter: NumberFormatter = {
@@ -93,6 +94,11 @@ struct ContentView: View {
             }
 
             Spacer()
+
+            Toggle("Animate", isOn: $animateMenuBar)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .help("Animate menu bar transitions")
 
             Toggle("Demo", isOn: $demoMode)
                 .toggleStyle(.switch)
