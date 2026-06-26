@@ -49,7 +49,7 @@ The app runs as a menu-bar item. Click the music-note icon to open the lyrics po
 
 - `LyripeekApp.swift` – app entry point and `AppDelegate`; wires up services.
 - `StatusBarController.swift` – manages the `NSStatusItem`, menu-bar title, and lyrics popover.
-- `NowPlayingService.swift` – actively-playing scan orchestrator: prefers a non-paused `MPNowPlayingInfoCenter` track, then iterates known `PlayerSource`s (in frontmost-app-priority order) for the first one that is actively playing, then falls back to a paused system track. No static priority list gates track selection.
+- `NowPlayingService.swift` – actively-playing scan orchestrator: prefers a non-paused `MPNowPlayingInfoCenter` track, then iterates known `PlayerSource`s (in frontmost-app-priority order) for the first one that is actively playing, then falls back to a paused system track. Also publishes `isMultipleActivePlayers` so the popover can show a "Playing from" line only when 2+ sources are playing simultaneously. No static priority list gates track selection.
 - `Services/MediaRemoteClient.swift` – loads the private `MediaRemote.framework` via `dlsym` and falls back to `NSWorkspace.shared.runningApplications` to identify the active publisher. The MediaRemote PID getter is known to crash on unprivileged clients and is intentionally not called; the public `NSWorkspace` scan is the reliable path.
 - `PlayerSources/PlayerSource.swift` – protocol every provider implements.
 - `PlayerSources/SystemNowPlayingPlayerSource.swift` – the always-on system fallback.
@@ -60,6 +60,7 @@ The app runs as a menu-bar item. Click the music-note icon to open the lyrics po
 - `LRCParser.swift` – parses LRC timestamp tags into `LyricLine` structs.
 - `SyncEngine.swift` – binary search for the active lyric line at a given time.
 - `ContentView.swift` – SwiftUI popover UI.
+- `Views/SupportedPlayersBar.swift` (file) – `NowPlayingFromView` SwiftUI view; shows "Playing from [source]" only when 2+ audio sources are actively playing.
 
 ## License
 

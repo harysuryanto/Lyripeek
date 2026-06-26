@@ -40,6 +40,12 @@ final class NowPlayingService: ObservableObject {
     @Published private(set) var lastParsedElapsedTime: TimeInterval = 0
     @Published private(set) var lastParsedDuration: TimeInterval = 0
 
+    /// True when two or more `PlayerSource` instances report a non-paused
+    /// track simultaneously. The popover's "Playing from" line uses this to
+    /// stay hidden unless the user actually has multiple audio sources
+    /// fighting for attention.
+    @Published private(set) var isMultipleActivePlayers: Bool = false
+
     /// Emitted whenever the playing track (title + artist) changes.
     var trackChangedPublisher: AnyPublisher<(title: String, artist: String, album: String, duration: TimeInterval), Never> {
         trackChangedSubject.eraseToAnyPublisher()
@@ -53,13 +59,6 @@ final class NowPlayingService: ObservableObject {
 
     private var enrichmentSources: [PlayerSource] {
         [spotifySource, appleMusicSource, kasetSource]
-    }
-
-    /// Read-only list of all known `PlayerSource` instances (system + the
-    /// three enriched apps). Used by the popover's "Supported Players" bar
-    /// and the debug window.
-    var allSources: [PlayerSource] {
-        [systemSource, spotifySource, appleMusicSource, kasetSource]
     }
 
     private var cancellables = Set<AnyCancellable>()
@@ -138,6 +137,12 @@ final class NowPlayingService: ObservableObject {
             resolvedTrack = systemTrack
         }
 
+        // Count how many known sources are actively playing. Drives the
+        // "Playing from" line — it only appears when there's actual ambiguity
+        // (2+ sources fighting for attention).
+        let playingCount = await countActivelyPlayingSources(in: orderedSources)
+        let isMultiple = playingCount >= 2
+
         await MainActor.run {
             rawNowPlayingInfo = systemSource.rawNowPlayingInfo
             lastAppleScriptError = [
@@ -150,6 +155,8 @@ final class NowPlayingService: ObservableObject {
             lastSpotifyOutput = spotifySource.lastOutput
             lastAppleMusicOutput = appleMusicSource.lastOutput
             lastKasetOutput = kasetSource.lastOutput
+
+            isMultipleActivePlayers = isMultiple
 
             guard let track = resolvedTrack else {
                 clearTrack()
@@ -214,5 +221,21 @@ final class NowPlayingService: ObservableObject {
         sourceDescription = ""
         sourceBundleIdentifier = nil
         artwork = nil
+        isMultipleActivePlayers = false
+    }
+
+    // MARK: - Helpers
+
+    /// Returns the number of sources in `sources` that report a non-paused
+    /// track. Used to decide whether the popover's "Playing from" line
+    /// should appear.
+    private func countActivelyPlayingSources(in sources: [PlayerSource]) async -> Int {
+        var count = 0
+        for source in sources {
+            if let track = await source.currentTrack(), !track.isPaused {
+                count += 1
+            }
+        }
+        return count
     }
 }

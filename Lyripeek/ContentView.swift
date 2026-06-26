@@ -29,7 +29,7 @@ struct ContentView: View {
 
             Divider()
 
-            SupportedPlayersBar()
+            NowPlayingFromView()
                 .environmentObject(nowPlayingService)
 
             Divider()

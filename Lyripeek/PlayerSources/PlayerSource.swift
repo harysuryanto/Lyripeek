@@ -85,10 +85,6 @@ protocol PlayerSource: AnyObject {
 }
 
 extension PlayerSource {
-    /// Default display-name suffix for the debug window section header.
-    var debugSectionTitle: String {
-        bundleIdentifier.map { "\(displayName) [\($0)]" } ?? displayName
-    }
 }
 
 /// Strips common noise from a metadata string (e.g. "Song (Official Video)").
