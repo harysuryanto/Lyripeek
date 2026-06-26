@@ -20,10 +20,21 @@ final class LyricsService: ObservableObject {
     @Published private(set) var rawLRC: String = ""
     @Published private(set) var currentLineText: String = ""
 
+    private static let offsetDefaultsKey = "lyricsOffset"
+
     /// Playback time offset applied when looking up the active lyric line.
     /// Positive values delay lyrics; negative values make them appear earlier.
     /// Stored in seconds; the UI presents the value in milliseconds.
-    @Published var offset: TimeInterval = 0
+    /// Persisted to `UserDefaults` so the value survives across app launches.
+    @Published var offset: TimeInterval {
+        didSet {
+            UserDefaults.standard.set(offset, forKey: Self.offsetDefaultsKey)
+        }
+    }
+
+    init() {
+        self.offset = UserDefaults.standard.double(forKey: Self.offsetDefaultsKey)
+    }
 
     private var cache: [String: [LyricLine]] = [:]
     private var pendingKey: String?
