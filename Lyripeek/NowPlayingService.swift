@@ -23,6 +23,18 @@ import MediaPlayer
 ///    we run their AppleScript to overlay a fresh `position` and explicit
 ///    source name on top of the system data. The system data is never
 ///    replaced — enrichment is additive.
+///
+/// `elapsedTime` is published with two enhancements on top of the raw source
+/// value:
+///
+/// - **Interpolation**: a 10 Hz tick recomputes `elapsedTime` as
+///   `lastReportedElapsed + (now - lastReportedAt) * playbackRate`, so the
+///   progress bar and lyric highlight move smoothly between the 1 Hz source
+///   polls instead of stepping in 1-second jumps.
+/// - **Auto-drift correction**: when the source app is consistently behind
+///   the wall clock (Spotify, Apple Music, and Kaset all update
+///   `MPNowPlayingInfoCenter` only on state changes or every few seconds),
+///   we detect the lag and add it to the interpolated value, capped at 5 s.
 final class NowPlayingService: ObservableObject {
     @Published private(set) var title: String = ""
     @Published private(set) var artist: String = ""
@@ -55,6 +67,30 @@ final class NowPlayingService: ObservableObject {
         [spotifySource, appleMusicSource, kasetSource]
     }
 
+    // MARK: - Interpolation state
+
+    /// The source-app-reported elapsed time captured at `lastReportedAt`.
+    /// Interpolated forward between source polls by `tickElapsedTimeInterpolation`.
+    private var lastReportedElapsed: TimeInterval = 0
+    private var lastReportedAt: Date = .distantPast
+    /// `playbackRate` of the last source read; `0` when paused (which makes
+    /// the tick a no-op so the progress bar freezes).
+    private var lastReportedRate: Double = 0
+
+    // MARK: - Auto-drift state
+
+    /// Detected offset between the source's reported position and the actual
+    /// wall-clock position. Added to the interpolated value before publish.
+    /// Capped at `Self.driftCapSeconds` to prevent runaway.
+    private var driftOffset: TimeInterval = 0
+    /// The "fresh" baseline for drift detection: the source value + wall
+    /// clock time we last accepted as truth. Used to estimate how far the
+    /// source has fallen behind the wall clock.
+    private var lastFreshSourceValue: TimeInterval? = nil
+    private var lastFreshSourceAt: Date? = nil
+
+    private static let driftCapSeconds: TimeInterval = 5.0
+
     private var cancellables = Set<AnyCancellable>()
     private let trackChangedSubject = PassthroughSubject<(title: String, artist: String, album: String, duration: TimeInterval), Never>()
 
@@ -67,12 +103,23 @@ final class NowPlayingService: ObservableObject {
     }
 
     private func startPolling() {
+        // 1 Hz source-data poll. Heavyweight (AppleScript calls on every tick).
         Timer.publish(every: 1.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 Task { [weak self] in
                     await self?.refresh()
                 }
+            }
+            .store(in: &cancellables)
+
+        // 10 Hz interpolation tick. Lightweight: arithmetic + one @Published
+        // set gated by a 10 ms threshold. Keeps the progress bar and lyric
+        // highlight moving smoothly between source polls.
+        Timer.publish(every: 0.1, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                self?.tickElapsedTimeInterpolation()
             }
             .store(in: &cancellables)
 
@@ -186,17 +233,93 @@ final class NowPlayingService: ObservableObject {
         artist = newArtist
         album = newAlbum
         duration = track.duration
-        elapsedTime = track.elapsedTime
         lastParsedDuration = track.duration
         lastParsedElapsedTime = track.elapsedTime
         sourceDescription = track.source
         sourceBundleIdentifier = track.bundleIdentifier
         self.artwork = artwork
 
+        // --- Interpolation baseline ---
+        // Rate of 0 means "paused" — the 10 Hz tick will treat this as a
+        // no-op and the progress bar will freeze at the last known value.
+        lastReportedElapsed = track.elapsedTime
+        lastReportedAt = Date()
+        lastReportedRate = track.isPaused ? 0 : track.playbackRate
+
+        // --- Auto-drift detection ---
+        updateDriftOffset(newSourceValue: track.elapsedTime)
+
+        // --- Published elapsedTime ---
+        // Use the interpolated + drift-corrected value so the very first
+        // tick after a source update already shows the right number
+        // (the next 10 Hz tick will keep advancing it).
+        let interpolated = lastReportedElapsed + max(0, lastReportedAt.timeIntervalSinceNow) * -1 * lastReportedRate
+        elapsedTime = max(0, interpolated + driftOffset)
+
         if trackDidChange && (!newTitle.isEmpty || !newArtist.isEmpty) {
             trackChangedSubject.send((title: newTitle, artist: newArtist, album: newAlbum, duration: track.duration))
         }
     }
+
+    /// Recomputes `driftOffset` based on the new source value. Called on
+    /// every `applyTrack`.
+    ///
+    /// The rule: if the source value is at or ahead of where wall clock
+    /// would put it (since the last fresh baseline), the source has caught
+    /// up — reset the drift. If the source is still behind, estimate the
+    /// drift as the wall-clock delta minus the source's progress.
+    private func updateDriftOffset(newSourceValue: TimeInterval) {
+        let now = Date()
+
+        guard let freshValue = lastFreshSourceValue,
+              let freshAt = lastFreshSourceAt else {
+            // First reading ever; nothing to compare against.
+            lastFreshSourceValue = newSourceValue
+            lastFreshSourceAt = now
+            driftOffset = 0
+            return
+        }
+
+        let wallClockSinceFresh = max(0, now.timeIntervalSince(freshAt))
+        let expectedSinceFresh = wallClockSinceFresh * lastReportedRate
+        let actualSinceFresh = newSourceValue - freshValue
+
+        if actualSinceFresh >= expectedSinceFresh - 0.5 {
+            // Source caught up. Accept as new fresh baseline.
+            lastFreshSourceValue = newSourceValue
+            lastFreshSourceAt = now
+            driftOffset = 0
+        } else if actualSinceFresh < 0 {
+            // Seek backward. Accept the new value, reset drift.
+            lastFreshSourceValue = newSourceValue
+            lastFreshSourceAt = now
+            driftOffset = 0
+        } else {
+            // Source is stale. Drift = how much we should add to stay in sync.
+            let estimatedDrift = expectedSinceFresh - actualSinceFresh
+            driftOffset = min(max(0, estimatedDrift), Self.driftCapSeconds)
+        }
+    }
+
+    // MARK: - 10 Hz tick
+
+    private func tickElapsedTimeInterpolation() {
+        // Skip while paused (rate = 0) or when there's no active track.
+        guard lastReportedRate > 0, lastReportedAt != .distantPast else { return }
+
+        let now = Date()
+        let delta = max(0, now.timeIntervalSince(lastReportedAt))
+        let interpolated = lastReportedElapsed + delta * lastReportedRate
+        let displayed = max(0, interpolated + driftOffset)
+
+        // Only publish when the change is meaningful to avoid spamming
+        // @Published fires when the value is essentially unchanged.
+        if abs(displayed - elapsedTime) >= 0.01 {
+            elapsedTime = displayed
+        }
+    }
+
+    // MARK: - Clear
 
     private func clearTrack() {
         title = ""
@@ -207,5 +330,13 @@ final class NowPlayingService: ObservableObject {
         sourceDescription = ""
         sourceBundleIdentifier = nil
         artwork = nil
+
+        // Reset interpolation + drift state so the next track starts fresh.
+        lastReportedElapsed = 0
+        lastReportedAt = .distantPast
+        lastReportedRate = 0
+        driftOffset = 0
+        lastFreshSourceValue = nil
+        lastFreshSourceAt = nil
     }
 }
