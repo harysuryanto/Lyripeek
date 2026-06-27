@@ -2,3 +2,5 @@
 Lyripeek.xcodeproj/xcuserdata/
 Lyripeek.xcodeproj/project.xcworkspace/xcuserdata/
 build/
+build/dmg-staging/
+dist/

@@ -24,16 +24,17 @@ https://github.com/user-attachments/assets/8e129347-866d-49d7-8ca0-7c0ddc0b4cb1
 
 **Requires macOS 14.0+**
 
-Download the latest `Lyripeek.app.zip` from the [Releases](../../releases) page, then:
+Download the latest `Lyripeek.dmg` from the [Releases](../../releases) page, then:
 
-1. Unzip and drag `Lyripeek.app` into the `/Applications` folder.
-2. Open Terminal and run the following to clear the quarantine attribute. Lyripeek is not signed with an Apple Developer ID because the developer is not enrolled in the Apple Developer Program, so macOS Gatekeeper would otherwise block the app:
+1. Open the DMG and drag `Lyripeek.app` into the **Applications** folder shortcut inside the window.
+2. Eject the DMG.
+3. Open Terminal and run the following to clear the quarantine attribute. Lyripeek is not signed with an Apple Developer ID because the developer is not enrolled in the Apple Developer Program, so macOS Gatekeeper would otherwise block the app:
 
    ```bash
    xattr -cr /Applications/Lyripeek.app
    ```
 
-3. Launch the app from Finder (or `open /Applications/Lyripeek.app`). It appears as a music-note icon in the menu bar.
+4. Launch the app from Finder (or `open /Applications/Lyripeek.app`). It appears as a music-note icon in the menu bar.
 
 On first launch macOS will prompt you to allow Lyripeek to send AppleEvents to other apps (Spotify, Apple Music, Kaset) for the enriched source experience. Click **OK** to grant access.
 
@@ -73,6 +74,14 @@ xcodebuild -project Lyripeek.xcodeproj -scheme Lyripeek -destination 'platform=m
 ```
 
 The app runs as a menu-bar item. Click the music-note icon to open the lyrics popover.
+
+To produce a distributable `Lyripeek-<version>.dmg` instead, run:
+
+```bash
+./scripts/build-dmg.sh
+```
+
+The DMG is written to `dist/`. The script uses only stock macOS tools (`xcodebuild`, `hdiutil`, `osascript`, `ditto`) — no Homebrew or other dependencies required.
 
 ## License
 
