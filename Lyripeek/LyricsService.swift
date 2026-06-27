@@ -160,7 +160,7 @@ final class LyricsService: ObservableObject {
         guard let url = components.url else { return nil }
 
         var request = URLRequest(url: url)
-        request.setValue("Lyripeek/1.0 (https://github.com/)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Lyripeek/0.1.0 (https://github.com/)", forHTTPHeaderField: "User-Agent")
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)

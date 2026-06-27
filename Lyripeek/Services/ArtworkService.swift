@@ -89,7 +89,7 @@ final class ArtworkService: ObservableObject {
         guard let url = components.url else { return nil }
 
         var request = URLRequest(url: url)
-        request.setValue("Lyripeek/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("Lyripeek/0.1.0", forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 8
 
         do {
