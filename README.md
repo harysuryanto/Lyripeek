@@ -20,13 +20,9 @@ https://github.com/user-attachments/assets/8e129347-866d-49d7-8ca0-7c0ddc0b4cb1
 - **Demo mode** – simulate playback to test the UI when no music app is running.
 - **Debug raw info** – inspect parsed player metadata, raw `MPNowPlayingInfoCenter` data, and the AppleScript output from each registered source.
 
-## Requirements
-
-- macOS 15.0+
-- Xcode 17+
-- Swift 5
-
 ## Install
+
+**Requires macOS 15.0+**
 
 Download the latest `Lyripeek.app.zip` from the [Releases](../../releases) page, then:
 
@@ -40,16 +36,6 @@ Download the latest `Lyripeek.app.zip` from the [Releases](../../releases) page,
 3. Launch the app from Finder (or `open /Applications/Lyripeek.app`). It appears as a music-note icon in the menu bar.
 
 On first launch macOS will prompt you to allow Lyripeek to send AppleEvents to other apps (Spotify, Apple Music, Kaset) for the enriched source experience. Click **OK** to grant access.
-
-## Build & Run
-
-Open `Lyripeek.xcodeproj` in Xcode and run the **Lyripeek** scheme, or build from the command line:
-
-```bash
-xcodebuild -project Lyripeek.xcodeproj -scheme Lyripeek -destination 'platform=macOS' build
-```
-
-The app runs as a menu-bar item. Click the music-note icon to open the lyrics popover.
 
 ## Usage
 
@@ -75,6 +61,18 @@ The app runs as a menu-bar item. Click the music-note icon to open the lyrics po
 - `LRCParser.swift` – parses LRC timestamp tags into `LyricLine` structs.
 - `SyncEngine.swift` – binary search for the active lyric line at a given time.
 - `ContentView.swift` – SwiftUI popover UI.
+
+## Build from Source
+
+**Requires Xcode 17+ and Swift 5.**
+
+Open `Lyripeek.xcodeproj` in Xcode and run the **Lyripeek** scheme, or build from the command line:
+
+```bash
+xcodebuild -project Lyripeek.xcodeproj -scheme Lyripeek -destination 'platform=macOS' build
+```
+
+The app runs as a menu-bar item. Click the music-note icon to open the lyrics popover.
 
 ## License
 
