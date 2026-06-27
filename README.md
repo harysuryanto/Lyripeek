@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/8e129347-866d-49d7-8ca0-7c0ddc0b4cb1
 
 ## Install
 
-**Requires macOS 15.0+**
+**Requires macOS 14.0+**
 
 Download the latest `Lyripeek.app.zip` from the [Releases](../../releases) page, then:
 
