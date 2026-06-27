@@ -21,6 +21,7 @@ struct DebugWindow: View {
         case nowPlaying = "Now Playing"
         case appleScript = "AppleScript"
         case lrc = "Raw LRC"
+        case about = "About"
 
         var id: String { rawValue }
     }
@@ -102,6 +103,8 @@ struct DebugWindow: View {
                     .textSelection(.enabled)
                     .padding(16)
             }
+        case .about:
+            AboutTab()
         }
     }
 
@@ -157,6 +160,73 @@ struct DebugWindow: View {
         }
 
         return sections.joined(separator: "\n")
+    }
+}
+
+// MARK: - About tab
+
+/// First-party-style About panel: app icon, name, version, short
+/// description, copyright, and links to the project and license.
+struct AboutTab: View {
+    private var appName: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Lyripeek"
+    }
+
+    private var version: String {
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+        return "\(short) (\(build))"
+    }
+
+    private var copyright: String {
+        let year = Calendar.current.component(.year, from: Date())
+        return "© \(year) Hary Suryanto. All rights reserved."
+    }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Spacer(minLength: 8)
+
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .frame(width: 96, height: 96)
+                .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+
+            Text(appName)
+                .font(.system(size: 20, weight: .semibold))
+
+            Text("Version \(version)")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+
+            Text("A lightweight macOS menu-bar app that shows time-synced lyrics for the music you're currently playing.")
+                .font(.system(size: 12))
+                .foregroundStyle(.primary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 360)
+                .padding(.top, 4)
+
+            Spacer(minLength: 4)
+
+            VStack(spacing: 6) {
+                Link("View on GitHub",
+                     destination: URL(string: "https://github.com/harysuryanto/Lyripeek")!)
+                    .font(.system(size: 12))
+
+                Text("Licensed under the MIT License.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+
+            Text(copyright)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .padding(.bottom, 12)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

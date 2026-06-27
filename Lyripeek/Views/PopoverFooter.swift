@@ -105,13 +105,15 @@ struct PopoverFooter: View {
     }
 
     private var animateToggle: some View {
-        Toggle(isOn: $animateMenuBar) {
+        Button {
+            animateMenuBar.toggle()
+        } label: {
             Image(systemName: "rectangle.arrowtriangle.2.outward")
                 .font(.system(size: 12, weight: .medium))
                 .frame(width: 24, height: 24)
+                .foregroundStyle(animateMenuBar ? Color.accentColor : .secondary)
         }
-        .toggleStyle(.button)
-        .controlSize(.small)
+        .buttonStyle(.borderless)
         .help("Animate menu-bar lyric transitions")
     }
 
@@ -127,8 +129,9 @@ struct PopoverFooter: View {
 
     private var quitButton: some View {
         Button(action: onQuit) {
-            Text("Quit")
-                .font(.system(size: 11, weight: .medium))
+            Image(systemName: "power")
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 24, height: 24)
         }
         .buttonStyle(.borderless)
         .help("Quit Lyripeek (⌘Q)")
