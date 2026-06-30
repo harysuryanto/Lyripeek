@@ -24,9 +24,11 @@ final class KasetPlayerSource: PlayerSource {
 
     private static let script = """
     tell application "Kaset"
-        try
-            return get player info
-        end try
+        if it is running then
+            try
+                return get player info
+            end try
+        end if
     end tell
     return ""
     """

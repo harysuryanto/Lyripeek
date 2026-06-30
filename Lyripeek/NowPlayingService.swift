@@ -29,12 +29,19 @@ import MediaPlayer
 ///
 /// - **Interpolation**: a 10 Hz tick recomputes `elapsedTime` as
 ///   `lastReportedElapsed + (now - lastReportedAt) * playbackRate`, so the
-///   progress bar and lyric highlight move smoothly between the 1 Hz source
-///   polls instead of stepping in 1-second jumps.
+///   progress bar and lyric highlight move smoothly between source polls
+///   instead of stepping in 1-second jumps.
 /// - **Auto-drift correction**: when the source app is consistently behind
 ///   the wall clock (Spotify, Apple Music, and Kaset all update
 ///   `MPNowPlayingInfoCenter` only on state changes or every few seconds),
 ///   we detect the lag and add it to the interpolated value, capped at 5 s.
+/// - **Adaptive polling**: the source-data poll runs at 1 Hz while a track
+///   is playing and drops to a 5 s idle cadence once no track has been
+///   playing for ~5 s, so the app stays quiet when idle. AppleScript
+///   enrichment is additionally gated on the target app actually running,
+///   so no `osascript` subprocess is spawned when no supported music app is
+///   open. A `NSWorkspace` launch observer wakes the poll immediately when a
+///   known music app starts.
 final class NowPlayingService: ObservableObject {
     @Published private(set) var title: String = ""
     @Published private(set) var artist: String = ""
@@ -91,6 +98,38 @@ final class NowPlayingService: ObservableObject {
 
     private static let driftCapSeconds: TimeInterval = 5.0
 
+    // MARK: - Poll cadence state
+
+    /// Keep polling at `activeIntervalSeconds` while a non-paused track has
+    /// been applied within this window. Bridges brief gaps (track ends →
+    /// next track starts) and bounds pause→resume detection for an
+    /// already-running app.
+    private static let activeCooldownSeconds: TimeInterval = 5.0
+    /// Poll cadence while active (within `activeCooldownSeconds` of a play).
+    private static let activeIntervalSeconds: TimeInterval = 1.0
+    /// Poll cadence once idle. Cold-start responsiveness when a music app
+    /// launches is handled by the `didLaunchApplicationNotification`
+    /// observer, so this only bounds "app running, user presses play"
+    /// detection.
+    private static let idleIntervalSeconds: TimeInterval = 5.0
+
+    /// Wall-clock time of the last non-paused `applyTrack`. Drives
+    /// `currentPollInterval()`: while within `activeCooldownSeconds` of this
+    /// timestamp the loop polls at `activeIntervalSeconds`, otherwise at
+    /// `idleIntervalSeconds`. Intentionally not reset by `clearTrack` so the
+    /// cooldown naturally bridges track gaps.
+    private var lastActiveAt: Date = .distantPast
+
+    /// The cooperative source-poll loop. Cancelling it (via
+    /// `restartPollingForLaunch` or `deinit`) interrupts any in-flight
+    /// `Task.sleep` so the next iteration begins promptly.
+    private var pollTask: Task<Void, Never>?
+
+    /// Token for the `NSWorkspace.didLaunchApplicationNotification` observer
+    /// that wakes the poll loop when a known music app launches. Removed in
+    /// `deinit`.
+    private var launchObserver: NSObjectProtocol?
+
     private var cancellables = Set<AnyCancellable>()
     private let trackChangedSubject = PassthroughSubject<(title: String, artist: String, album: String, duration: TimeInterval), Never>()
 
@@ -102,20 +141,18 @@ final class NowPlayingService: ObservableObject {
         startPolling()
     }
 
-    private func startPolling() {
-        // 1 Hz source-data poll. Heavyweight (AppleScript calls on every tick).
-        Timer.publish(every: 1.0, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                Task { [weak self] in
-                    await self?.refresh()
-                }
-            }
-            .store(in: &cancellables)
+    deinit {
+        pollTask?.cancel()
+        if let launchObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(launchObserver)
+        }
+    }
 
+    private func startPolling() {
         // 10 Hz interpolation tick. Lightweight: arithmetic + one @Published
         // set gated by a 10 ms threshold. Keeps the progress bar and lyric
-        // highlight moving smoothly between source polls.
+        // highlight moving smoothly between source polls. Already a no-op
+        // while no track is active (see `tickElapsedTimeInterpolation`).
         Timer.publish(every: 0.1, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
@@ -123,8 +160,67 @@ final class NowPlayingService: ObservableObject {
             }
             .store(in: &cancellables)
 
-        Task { [weak self] in
-            await self?.refresh()
+        // Source-data poll. Runs as a single cooperative async loop whose
+        // cadence adapts to activity: 1 Hz while a track is playing (so
+        // seeking / track changes stay responsive and the 10 Hz
+        // interpolation has fresh source data), 5 s once idle. See
+        // `currentPollInterval()` for the state machine and
+        // `restartPollingForLaunch()` for the cold-start wake path.
+        pollTask = Task { [weak self] in
+            await self?.pollLoop()
+        }
+
+        // Wake the poll loop immediately when a known music app launches so
+        // lyrics appear without waiting for the next idle tick. Free while
+        // idle: the system posts this regardless of our poll rate, and the
+        // closure only does a cheap bundle-id check before restarting the
+        // loop.
+        launchObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didLaunchApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self = self else { return }
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  let bundleID = app.bundleIdentifier,
+                  MediaRemoteClient.shared.isKnownPublisher(bundleID)
+            else { return }
+            self.restartPollingForLaunch()
+        }
+    }
+
+    /// Adaptive source-poll loop. Repeatedly refreshes then sleeps for
+    /// `currentPollInterval()` seconds. Cancelling `pollTask` interrupts the
+    /// in-flight sleep (via `CancellationError`, swallowed by `try?`) and the
+    /// `Task.isCancelled` check exits the loop cleanly.
+    private func pollLoop() async {
+        while !Task.isCancelled {
+            await refresh()
+            if Task.isCancelled { break }
+            let interval = await currentPollInterval()
+            try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+        }
+    }
+
+    /// Returns the current poll interval based on how recently a track was
+    /// playing. Runs on the main actor because `lastActiveAt` is written
+    /// there (from `applyTrack`).
+    private func currentPollInterval() async -> TimeInterval {
+        await MainActor.run {
+            let idle = Date().timeIntervalSince(lastActiveAt) >= Self.activeCooldownSeconds
+            return idle ? Self.idleIntervalSeconds : Self.activeIntervalSeconds
+        }
+    }
+
+    /// Cancels any in-flight poll sleep and restarts the loop with an
+    /// immediate `refresh()`, so a freshly launched music app is detected
+    /// within ~1 s instead of waiting for the next idle tick. Must be called
+    /// on the main queue — the `didLaunchApplicationNotification` observer is
+    /// registered with `queue: .main`.
+    private func restartPollingForLaunch() {
+        pollTask?.cancel()
+        pollTask = Task { [weak self] in
+            await self?.pollLoop()
         }
     }
 
@@ -162,9 +258,16 @@ final class NowPlayingService: ObservableObject {
         }
 
         // Layer 3: scan known sources in frontmost-priority order. First one
-        // that is actively playing wins.
+        // that is actively playing wins. Gated by a running-app check so we
+        // never spawn an `osascript` subprocess for an app that isn't
+        // running — that spawn cost is the main energy waste this poll
+        // would otherwise incur every tick.
         if resolvedTrack == nil {
+            let runningKnownIDs = MediaRemoteClient.shared.runningKnownPublisherBundleIDs()
             for source in orderedSources {
+                guard let id = source.bundleIdentifier, runningKnownIDs.contains(id) else {
+                    continue
+                }
                 if let candidate = await source.currentTrack(), !candidate.isPaused {
                     resolvedTrack = candidate
                     break
@@ -245,6 +348,15 @@ final class NowPlayingService: ObservableObject {
         lastReportedElapsed = track.elapsedTime
         lastReportedAt = Date()
         lastReportedRate = track.isPaused ? 0 : track.playbackRate
+
+        // --- Poll-cadence state ---
+        // Mark "active" only for a playing track so `currentPollInterval()`
+        // keeps polling at 1 Hz. Paused tracks don't extend the active
+        // window; once `activeCooldownSeconds` elapses without a playing
+        // track the loop drops to the idle interval.
+        if !track.isPaused {
+            lastActiveAt = Date()
+        }
 
         // --- Auto-drift detection ---
         updateDriftOffset(newSourceValue: track.elapsedTime)
@@ -332,6 +444,9 @@ final class NowPlayingService: ObservableObject {
         artwork = nil
 
         // Reset interpolation + drift state so the next track starts fresh.
+        // `lastActiveAt` is intentionally NOT reset here: keeping it lets the
+        // `activeCooldownSeconds` window bridge brief gaps (track ends → next
+        // track starts) so polling stays at 1 Hz across the boundary.
         lastReportedElapsed = 0
         lastReportedAt = .distantPast
         lastReportedRate = 0
