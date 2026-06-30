@@ -245,7 +245,7 @@ enum DebugWindowPresenter {
         nowPlayingService: NowPlayingService,
         lyricsService: LyricsService
     ) {
-        if let existing = window, existing.isVisible {
+        if let existing = window {
             existing.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
