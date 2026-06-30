@@ -23,11 +23,38 @@ final class CrossfadeStatusView: NSView {
         set {
             guard newValue != activeField.stringValue else { return }
             guard let incoming = inactiveField else { return }
-            incoming.stringValue = newValue
+            if twoLineMode, let newlineIndex = newValue.firstIndex(of: "\n") {
+                let currentLine = String(newValue[..<newlineIndex])
+                let nextLine = String(newValue[newlineIndex...].dropFirst())
+                let font = twoLineFont
+                let attrStr = NSMutableAttributedString(string: currentLine + "\n" + nextLine)
+                attrStr.addAttributes([.font: font], range: NSRange(location: 0, length: attrStr.length))
+                let nextStart = newValue.distance(from: newValue.startIndex, to: newlineIndex) + 1
+                attrStr.addAttributes(
+                    [.foregroundColor: NSColor.labelColor.withAlphaComponent(0.5)],
+                    range: NSRange(location: nextStart, length: nextLine.count)
+                )
+                incoming.attributedStringValue = attrStr
+            } else {
+                incoming.stringValue = newValue
+            }
             incoming.sizeToFit()
             transition(to: incoming)
         }
     }
+
+    /// When enabled, the status view can show up to two lines of lyric text
+    /// (current line on top, next line below). The caller passes a single
+    /// string containing both lines joined by a newline.
+    var twoLineMode: Bool = false {
+        didSet {
+            guard twoLineMode != oldValue else { return }
+            applyTwoLineMode()
+        }
+    }
+
+    private var twoLineFont: NSFont { NSFont.menuBarFont(ofSize: 9) }
+    private var singleLineFont: NSFont { NSFont.menuBarFont(ofSize: 0) }
 
     private var animationEnabled: Bool {
         UserDefaults.standard.bool(forKey: "animateMenuBar")
@@ -68,7 +95,7 @@ final class CrossfadeStatusView: NSView {
             field.drawsBackground = false
             field.isEditable = false
             field.isSelectable = false
-            field.font = NSFont.menuBarFont(ofSize: 0)
+            field.font = singleLineFont
             field.alignment = .right
             field.lineBreakMode = .byClipping
             field.maximumNumberOfLines = 1
@@ -85,6 +112,22 @@ final class CrossfadeStatusView: NSView {
         iconViewB.alphaValue = 0
         textFieldA.alphaValue = 1
         iconViewA.alphaValue = 1
+
+        applyTwoLineMode()
+    }
+
+    private func applyTwoLineMode() {
+        let font = twoLineMode ? twoLineFont : singleLineFont
+        let maxLines = twoLineMode ? 2 : 1
+        for field in [textFieldA, textFieldB] {
+            field.font = font
+            field.maximumNumberOfLines = maxLines
+        }
+        textFieldA.sizeToFit()
+        textFieldB.sizeToFit()
+        needsLayout = true
+        invalidateIntrinsicContentSize()
+        onContentResize?()
     }
 
     override func layout() {
@@ -93,10 +136,13 @@ final class CrossfadeStatusView: NSView {
         let barHeight = bounds.height
         let textRightX = bounds.width - horizontalPadding
 
-        let textSizeA = textFieldA.sizeThatFits(NSSize(width: CGFloat.greatestFiniteMagnitude, height: barHeight))
-        let textSizeB = textFieldB.sizeThatFits(NSSize(width: CGFloat.greatestFiniteMagnitude, height: barHeight))
-        let yA = (barHeight - textSizeA.height) / 2
-        let yB = (barHeight - textSizeB.height) / 2
+        let fitSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: barHeight)
+        var textSizeA = textFieldA.sizeThatFits(fitSize)
+        var textSizeB = textFieldB.sizeThatFits(fitSize)
+        textSizeA.height = min(textSizeA.height, barHeight)
+        textSizeB.height = min(textSizeB.height, barHeight)
+        let yA = max(0, (barHeight - textSizeA.height) / 2)
+        let yB = max(0, (barHeight - textSizeB.height) / 2)
 
         textFieldA.frame = NSRect(x: textRightX - textSizeA.width, y: yA, width: textSizeA.width, height: textSizeA.height)
         textFieldB.frame = NSRect(x: textRightX - textSizeB.width, y: yB, width: textSizeB.width, height: textSizeB.height)
