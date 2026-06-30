@@ -33,7 +33,7 @@ Download the latest `Lyripeek.dmg` from the [Releases](../../releases) page, the
 
 1. Open the DMG and drag `Lyripeek.app` into the **Applications** folder shortcut inside the window.
 2. Eject the DMG.
-3. Open Terminal and run the following to clear the quarantine attribute. Lyripeek is not signed with an Apple Developer ID because the developer is not enrolled in the Apple Developer Program, so macOS Gatekeeper would otherwise block the app:
+3. **Required.** Open Terminal and run the following to clear the quarantine attribute. Without this, macOS will show a "Lyripeek is damaged and can't be opened" error. This happens because the app is not signed with an Apple Developer ID, so macOS Gatekeeper blocks it by default:
 
    ```bash
    xattr -cr /Applications/Lyripeek.app
