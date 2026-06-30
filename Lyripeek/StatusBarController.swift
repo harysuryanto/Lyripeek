@@ -53,21 +53,41 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             systemSymbolName: "music.note.list",
             accessibilityDescription: "Lyripeek"
         )
-        statusView.onClick = { [weak self] in
-            self?.togglePopover()
-        }
-        statusView.onRightClick = { [weak self] event in
-            self?.showContextMenu(from: event)
-        }
         statusView.onContentResize = { [weak self] in
             guard let self, !self.isPopoverOpen else { return }
             let targetWidth = self.statusView?.intrinsicContentSize.width ?? NSStatusItem.variableLength
             self.statusItem?.length = NSStatusItem.variableLength
             self.statusItem?.length = targetWidth
         }
-        statusItem.view = statusView
         statusView.twoLineMode = twoLineMode
         self.statusView = statusView
+
+        // Embed the custom view inside the status bar button instead of using
+        // the deprecated `statusItem.view`. The button handles left-click via
+        // its target/action; a right-click gesture recognizer is added below.
+        if let button = statusItem.button {
+            button.image = nil
+            button.title = ""
+
+            statusView.translatesAutoresizingMaskIntoConstraints = false
+            button.addSubview(statusView)
+            NSLayoutConstraint.activate([
+                statusView.leadingAnchor.constraint(equalTo: button.leadingAnchor),
+                statusView.trailingAnchor.constraint(equalTo: button.trailingAnchor),
+                statusView.topAnchor.constraint(equalTo: button.topAnchor),
+                statusView.bottomAnchor.constraint(equalTo: button.bottomAnchor),
+            ])
+
+            button.target = self
+            button.action = #selector(statusBarButtonClicked)
+
+            let rightClick = NSClickGestureRecognizer(
+                target: self,
+                action: #selector(statusBarRightClicked(_:))
+            )
+            rightClick.buttonMask = 0x2
+            button.addGestureRecognizer(rightClick)
+        }
 
         let popover = NSPopover()
         popover.contentSize = NSSize(width: 420, height: 400)
@@ -125,6 +145,17 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         } else {
             statusView.text = lineText
         }
+    }
+
+    // MARK: - Click handling via button target/action
+
+    @objc private func statusBarButtonClicked() {
+        togglePopover()
+    }
+
+    @objc private func statusBarRightClicked(_ sender: NSGestureRecognizer) {
+        guard let event = NSApp.currentEvent else { return }
+        showContextMenu(from: event)
     }
 
     private func togglePopover() {
