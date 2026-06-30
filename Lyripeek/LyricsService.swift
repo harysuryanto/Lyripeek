@@ -55,7 +55,7 @@ final class LyricsService: ObservableObject {
     /// no result, `lines` is left empty and nothing is cached, so a future
     /// fetch (or the reset button) can retry.
     func loadLyrics(title: String, artist: String, album: String, duration: TimeInterval) {
-        let key = cacheKey(title: title, artist: artist)
+        let key = cacheKey(title: title, artist: artist, album: album)
 
         currentTrack = (title: title, artist: artist, album: album, duration: duration)
 
@@ -74,7 +74,12 @@ final class LyricsService: ObservableObject {
         rawLRC = ""
 
         Task { [weak self] in
-            guard let realLRC = await Self.fetchLRCLIBLyrics(title: title, artist: artist) else {
+            guard let realLRC = await Self.fetchLRCLIBLyrics(
+                title: title,
+                artist: artist,
+                album: album,
+                duration: duration
+            ) else {
                 await MainActor.run {
                     self?.isLoading = false
                     self?.pendingKey = nil
@@ -100,7 +105,7 @@ final class LyricsService: ObservableObject {
     /// re-triggers a fresh fetch. No-op if no track is active.
     func resetCurrentLyrics() {
         guard let track = currentTrack else { return }
-        let key = cacheKey(title: track.title, artist: track.artist)
+        let key = cacheKey(title: track.title, artist: track.artist, album: track.album)
 
         cache.removeValue(forKey: key)
         saveCacheToDisk()
@@ -148,9 +153,72 @@ final class LyricsService: ObservableObject {
 
     // MARK: - LRCLIB API
 
-    /// Searches LRCLIB for the track and returns the synced LRC text, or `nil`
-    /// if nothing is found or the request fails.
-    nonisolated private static func fetchLRCLIBLyrics(title: String, artist: String) async -> String? {
+    /// Fetches synced lyrics from LRCLIB. Tries the exact `/api/get` endpoint
+    /// first (matching track name, artist, album, and duration), then falls
+    /// back to the fuzzy `/api/search` endpoint. Returns the synced LRC text,
+    /// or `nil` if neither path finds synced lyrics.
+    nonisolated private static func fetchLRCLIBLyrics(
+        title: String,
+        artist: String,
+        album: String,
+        duration: TimeInterval
+    ) async -> String? {
+        if let exact = await fetchExact(
+            title: title,
+            artist: artist,
+            album: album,
+            duration: duration
+        ) {
+            return exact
+        }
+        return await fetchSearch(title: title, artist: artist)
+    }
+
+    /// Exact-match lookup via `/api/get`. Returns a single matched track, not
+    /// an array. Skipped when `duration <= 0` because the endpoint requires a
+    /// duration and a wrong one would reduce match quality. The endpoint
+    /// accepts an empty `album_name` and has built-in duration tolerance.
+    nonisolated private static func fetchExact(
+        title: String,
+        artist: String,
+        album: String,
+        duration: TimeInterval
+    ) async -> String? {
+        guard duration > 0 else { return nil }
+        guard !title.isEmpty || !artist.isEmpty else { return nil }
+
+        var components = URLComponents(string: "https://lrclib.net/api/get")!
+        components.queryItems = [
+            URLQueryItem(name: "track_name", value: title),
+            URLQueryItem(name: "artist_name", value: artist),
+            URLQueryItem(name: "album_name", value: album),
+            URLQueryItem(name: "duration", value: String(Int(duration.rounded())))
+        ]
+
+        guard let url = components.url else { return nil }
+
+        var request = URLRequest(url: url)
+        request.setValue("Lyripeek/0.1.0 (https://github.com/)", forHTTPHeaderField: "User-Agent")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200..<300).contains(httpResponse.statusCode) else {
+                return nil
+            }
+
+            let result = try JSONDecoder().decode(LRCLIBResult.self, from: data)
+            return result.hasSyncedLyrics ? result.syncedLyrics : nil
+        } catch {
+            return nil
+        }
+    }
+
+    /// Fuzzy search via `/api/search`. Used as the fallback when the exact
+    /// lookup finds nothing (e.g. duration unknown, or the track isn't in
+    /// LRCLIB's indexed albums). Returns the first result with synced lyrics.
+    nonisolated private static func fetchSearch(title: String, artist: String) async -> String? {
         guard !title.isEmpty || !artist.isEmpty else { return nil }
 
         let query = "\(artist) \(title)".trimmingCharacters(in: .whitespaces)
@@ -188,10 +256,11 @@ final class LyricsService: ObservableObject {
         currentLineText = lines[index].text
     }
 
-    private func cacheKey(title: String, artist: String) -> String {
+    private func cacheKey(title: String, artist: String, album: String) -> String {
         let normalizedTitle = title.trimmingCharacters(in: .whitespaces).lowercased()
         let normalizedArtist = artist.trimmingCharacters(in: .whitespaces).lowercased()
-        return "\(normalizedArtist) - \(normalizedTitle)"
+        let normalizedAlbum = album.trimmingCharacters(in: .whitespaces).lowercased()
+        return "\(normalizedArtist) - \(normalizedTitle) - \(normalizedAlbum)"
     }
 }
 
