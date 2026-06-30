@@ -28,12 +28,6 @@ struct SyncedLyricsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: 220, alignment: .top)
-        .onChange(of: nowPlayingService.elapsedTime) { _, newTime in
-            lyricsService.updateCurrentLine(at: newTime)
-        }
-        .onChange(of: lyricsService.offset) { _, _ in
-            lyricsService.updateCurrentLine(at: nowPlayingService.elapsedTime)
-        }
     }
 
     // MARK: - States

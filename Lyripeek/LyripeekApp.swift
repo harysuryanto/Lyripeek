@@ -66,6 +66,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
+        // When the user changes the lyric offset, recompute the active line
+        // immediately so the menu bar updates without waiting for the next
+        // 10 Hz elapsedTime tick.
+        lyricsService.$offset
+            .sink { [weak self] _ in
+                self?.lyricsService.updateCurrentLine(
+                    at: self?.nowPlayingService.elapsedTime ?? 0
+                )
+            }
+            .store(in: &cancellables)
+
         statusBarController.configure(
             nowPlayingService: nowPlayingService,
             lyricsService: lyricsService,
