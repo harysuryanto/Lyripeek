@@ -7,6 +7,14 @@
 
 import Foundation
 
+/// Compiled once at process start. `NSRegularExpression` is thread-safe for
+/// matching and immutable, so a single shared instance is safe to reuse
+/// across all `parseLRC` calls.
+private let lrcTimestampRegex: NSRegularExpression? = try? NSRegularExpression(
+    pattern: #"\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]"#,
+    options: []
+)
+
 struct LyricLine: Identifiable {
     let id = UUID()
     let time: TimeInterval
@@ -22,10 +30,7 @@ struct LyricLine: Identifiable {
 /// Multiple timestamps on a single line are expanded into multiple lyric lines.
 /// Invalid lines are ignored. The returned array is sorted by time ascending.
 func parseLRC(_ lrc: String) -> [LyricLine] {
-    let pattern = #"\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]"#
-    guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
-        return []
-    }
+    guard let regex = lrcTimestampRegex else { return [] }
 
     var lines: [LyricLine] = []
 
