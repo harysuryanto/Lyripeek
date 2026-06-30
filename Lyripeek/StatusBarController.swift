@@ -18,17 +18,33 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     private var lyricsService: LyricsService?
     private var nowPlayingService: NowPlayingService?
     private var artworkService: ArtworkService?
+    private var updateService: UpdateService?
+    private let loginItemService = LoginItemService()
     private var isPopoverOpen = false
     private var cancellables = Set<AnyCancellable>()
+    private static let twoLineModeKey = "twoLineMode"
+    private var twoLineMode: Bool = UserDefaults.standard.bool(forKey: StatusBarController.twoLineModeKey) {
+        didSet {
+            guard twoLineMode != oldValue else { return }
+            statusView?.twoLineMode = twoLineMode
+            updateMenuBarTitle(
+                isLoading: lyricsService?.isLoading ?? false,
+                lineText: lyricsService?.currentLineText ?? "",
+                nextLineText: lyricsService?.nextLineText ?? ""
+            )
+        }
+    }
 
     func configure(
         nowPlayingService: NowPlayingService,
         lyricsService: LyricsService,
-        artworkService: ArtworkService
+        artworkService: ArtworkService,
+        updateService: UpdateService
     ) {
         self.lyricsService = lyricsService
         self.nowPlayingService = nowPlayingService
         self.artworkService = artworkService
+        self.updateService = updateService
 
         let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
@@ -50,6 +66,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             self.statusItem?.length = targetWidth
         }
         statusItem.view = statusView
+        statusView.twoLineMode = twoLineMode
         self.statusView = statusView
 
         let popover = NSPopover()
@@ -68,27 +85,43 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
                 .environmentObject(nowPlayingService)
                 .environmentObject(lyricsService)
                 .environmentObject(artworkService)
+                .environmentObject(updateService)
         )
 
         self.statusItem = statusItem
         self.popover = popover
 
         lyricsService.$isLoading
-            .combineLatest(lyricsService.$currentLineText)
+            .combineLatest(lyricsService.$currentLineText, lyricsService.$nextLineText)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] isLoading, lineText in
-                self?.updateMenuBarTitle(isLoading: isLoading, lineText: lineText)
+            .sink { [weak self] isLoading, lineText, nextLineText in
+                self?.updateMenuBarTitle(isLoading: isLoading, lineText: lineText, nextLineText: nextLineText)
+            }
+            .store(in: &cancellables)
+
+        // Observe runtime changes to the twoLineMode UserDefaults flag so the
+        // status view re-renders immediately when the toggle is flipped.
+        // Prefer the broad didChangeNotification over per-key KVO since
+        // UserDefaults has no dynamic KeyPath for arbitrary bool keys.
+        NotificationCenter.default
+            .publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                let value = UserDefaults.standard.bool(forKey: StatusBarController.twoLineModeKey)
+                if self?.twoLineMode != value { self?.twoLineMode = value }
             }
             .store(in: &cancellables)
     }
 
-    private func updateMenuBarTitle(isLoading: Bool, lineText: String) {
+    private func updateMenuBarTitle(isLoading: Bool, lineText: String, nextLineText: String) {
         guard let statusView else { return }
 
         if isLoading {
             statusView.text = "Fetching lyrics…"
         } else if lineText.isEmpty {
             statusView.text = ""
+        } else if twoLineMode && !nextLineText.isEmpty {
+            statusView.text = "\(lineText)\n\(nextLineText)"
         } else {
             statusView.text = lineText
         }
@@ -115,10 +148,11 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     }
 
     private func openDebugWindow() {
-        guard let nowPlayingService, let lyricsService else { return }
+        guard let nowPlayingService, let lyricsService, let updateService else { return }
         DebugWindowPresenter.present(
             nowPlayingService: nowPlayingService,
-            lyricsService: lyricsService
+            lyricsService: lyricsService,
+            updateService: updateService
         )
     }
 
@@ -127,6 +161,16 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     private lazy var contextMenu: NSMenu = {
         let menu = NSMenu()
         menu.autoenablesItems = false
+
+        let launchAtLoginItem = NSMenuItem(
+            title: "Launch at Login",
+            action: #selector(menuToggleLaunchAtLogin),
+            keyEquivalent: ""
+        )
+        launchAtLoginItem.target = self
+        menu.addItem(launchAtLoginItem)
+
+        menu.addItem(NSMenuItem.separator())
 
         let quitItem = NSMenuItem(
             title: "Quit Lyripeek",
@@ -142,7 +186,17 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     private func showContextMenu(from event: NSEvent) {
         guard let statusView else { return }
         let location = statusView.convert(event.locationInWindow, from: nil)
+        if let launchAtLoginItem = contextMenu.item(withTitle: "Launch at Login") {
+            launchAtLoginItem.state = loginItemService.isEnabled ? .on : .off
+        }
         contextMenu.popUp(positioning: nil, at: location, in: statusView)
+    }
+
+    @objc private func menuToggleLaunchAtLogin() {
+        loginItemService.setEnabled(!loginItemService.isEnabled)
+        if let launchAtLoginItem = contextMenu.item(withTitle: "Launch at Login") {
+            launchAtLoginItem.state = loginItemService.isEnabled ? .on : .off
+        }
     }
 
     @objc private func menuQuit() {
@@ -162,7 +216,8 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         if let lyricsService {
             updateMenuBarTitle(
                 isLoading: lyricsService.isLoading,
-                lineText: lyricsService.currentLineText
+                lineText: lyricsService.currentLineText,
+                nextLineText: lyricsService.nextLineText
             )
         }
     }

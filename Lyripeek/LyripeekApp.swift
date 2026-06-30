@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let nowPlayingService = NowPlayingService()
     private let lyricsService = LyricsService()
     private let artworkService = ArtworkService()
+    private let updateService = UpdateService()
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -87,7 +88,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBarController.configure(
             nowPlayingService: nowPlayingService,
             lyricsService: lyricsService,
-            artworkService: artworkService
+            artworkService: artworkService,
+            updateService: updateService
         )
+
+        // Start the daily 22:00 update check (with a launch-time catch-up
+        // when the last check was more than 24 h ago).
+        updateService.start()
     }
 }

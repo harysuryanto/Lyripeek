@@ -11,8 +11,10 @@ import SwiftUI
 /// animation toggle, and a button that opens the standalone debug window.
 struct PopoverFooter: View {
     @EnvironmentObject private var lyricsService: LyricsService
+    @EnvironmentObject private var updateService: UpdateService
 
     @AppStorage("animateMenuBar") private var animateMenuBar = true
+    @AppStorage("twoLineMode") private var twoLineMode = false
 
     let offsetStep: TimeInterval = 0.2
     var onOpenDebug: () -> Void
@@ -43,6 +45,7 @@ struct PopoverFooter: View {
             Spacer(minLength: 4)
             refetchButton
             animateToggle
+            twoLineToggle
             debugButton
             quitButton
         }
@@ -117,14 +120,38 @@ struct PopoverFooter: View {
         .help("Animate menu-bar lyric transitions")
     }
 
+    private var twoLineToggle: some View {
+        Button {
+            twoLineMode.toggle()
+        } label: {
+            Image(systemName: "text.append")
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 24, height: 24)
+                .foregroundStyle(twoLineMode ? Color.accentColor : .secondary)
+        }
+        .buttonStyle(.borderless)
+        .help("Two-line mode: show current and next line in menu bar")
+    }
+
     private var debugButton: some View {
         Button(action: onOpenDebug) {
             Image(systemName: "info.circle")
                 .font(.system(size: 12, weight: .medium))
                 .frame(width: 24, height: 24)
+                .overlay(alignment: .topTrailing) {
+                    if updateService.isUpdateAvailable {
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: 7, height: 7)
+                            .overlay(Circle().fill(.white).frame(width: 2.5, height: 2.5))
+                            .offset(x: 1.5, y: -1.5)
+                    }
+                }
         }
         .buttonStyle(.borderless)
-        .help("Show debug info")
+        .help(updateService.isUpdateAvailable
+              ? "Update available — show info"
+              : "Show debug info")
     }
 
     private var quitButton: some View {

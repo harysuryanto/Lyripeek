@@ -168,6 +168,8 @@ struct DebugWindow: View {
 /// First-party-style About panel: app icon, name, version, short
 /// description, copyright, and links to the project and license.
 struct AboutTab: View {
+    @EnvironmentObject private var updateService: UpdateService
+
     private var appName: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Lyripeek"
     }
@@ -181,6 +183,65 @@ struct AboutTab: View {
     private var copyright: String {
         let year = Calendar.current.component(.year, from: Date())
         return "© \(year) Hary Suryanto. All rights reserved."
+    }
+
+    // MARK: - Update
+
+    private var updateSection: some View {
+        VStack(spacing: 8) {
+            if updateService.isUpdateAvailable, let latest = updateService.latestVersion {
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Update available")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.orange)
+                        Text("Lyripeek \(latest) is ready to download.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                    Button("Download") {
+                        updateService.openDownload()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.orange.opacity(0.1))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.orange.opacity(0.3))
+                )
+            }
+
+            HStack(spacing: 6) {
+                Button {
+                    updateService.checkNow()
+                } label: {
+                    if updateService.isChecking {
+                        HStack(spacing: 4) {
+                            ProgressView().controlSize(.small)
+                            Text("Checking…")
+                        }
+                    } else {
+                        Text("Check for Updates…")
+                    }
+                }
+                .buttonStyle(.borderless)
+                .disabled(updateService.isChecking)
+
+                if let lastChecked = updateService.lastChecked {
+                    Text("Last checked \(lastChecked.formatted(.relative(presentation: .named)))")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .frame(maxWidth: 360)
     }
 
     var body: some View {
@@ -206,6 +267,8 @@ struct AboutTab: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 360)
                 .padding(.top, 4)
+
+            updateSection
 
             Spacer(minLength: 4)
 
@@ -243,7 +306,8 @@ enum DebugWindowPresenter {
 
     static func present(
         nowPlayingService: NowPlayingService,
-        lyricsService: LyricsService
+        lyricsService: LyricsService,
+        updateService: UpdateService
     ) {
         if let existing = window {
             existing.makeKeyAndOrderFront(nil)
@@ -254,6 +318,7 @@ enum DebugWindowPresenter {
         let content = DebugWindow()
             .environmentObject(nowPlayingService)
             .environmentObject(lyricsService)
+            .environmentObject(updateService)
 
         let host = NSHostingController(rootView: content)
         let newWindow = NSWindow(contentViewController: host)
