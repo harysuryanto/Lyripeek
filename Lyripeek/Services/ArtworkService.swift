@@ -8,11 +8,16 @@ import Combine
 import Foundation
 
 /// Fetches album artwork from the public iTunes Search API and caches it
-/// in memory for the lifetime of the app.
+/// in memory and on disk.
 ///
 /// The API is unauthenticated and returns a 100×100 artwork URL that we
 /// upgrade to 600×600 by string replacement. We fall back silently on
 /// failure so the popover always renders.
+///
+/// Disk cache lives under `~/Library/Caches/Lyripeek/Artwork/` so macOS can
+/// purge it under disk pressure. A 200-image LRU cap (tracked via file
+/// modification date) bounds steady-state disk usage. The in-memory cache
+/// stays the fast path; disk is checked only on a memory miss.
 @MainActor
 final class ArtworkService: ObservableObject {
     @Published private(set) var artwork: NSImage?
@@ -40,23 +45,43 @@ final class ArtworkService: ObservableObject {
         isLoading = true
 
         Task { [weak self] in
-            let image = await Self.fetchArtwork(title: title, artist: artist)
+            // Disk hit: load bytes, decode, populate memory + publish.
+            if let diskData = await Self.readFromDisk(key: key),
+               let image = NSImage(data: diskData) {
+                await MainActor.run {
+                    guard let self else { return }
+                    self.cache[key] = image
+                    self.isLoading = false
+                    self.pendingKey = nil
+                    if self.currentKey == key {
+                        self.artwork = image
+                    }
+                }
+                // LRU: mark as recently accessed.
+                await Self.touchDiskFile(key: key)
+                return
+            }
+
+            // Disk miss (or corrupt file): fetch from network.
+            let data = await Self.fetchArtworkData(title: title, artist: artist)
 
             await MainActor.run {
                 guard let self else { return }
                 self.isLoading = false
                 self.pendingKey = nil
-                if let image {
+                if let data, let image = NSImage(data: data) {
                     self.cache[key] = image
-                    // Only publish if the track hasn't changed during fetch.
                     if self.currentKey == key {
                         self.artwork = image
                     }
-                } else {
-                    if self.currentKey == key {
-                        self.artwork = nil
-                    }
+                } else if self.currentKey == key {
+                    self.artwork = nil
                 }
+            }
+
+            // Persist to disk + evict oldest if over cap.
+            if let data {
+                await Self.writeToDisk(data: data, key: key)
             }
         }
     }
@@ -73,7 +98,103 @@ final class ArtworkService: ObservableObject {
         return "\(normalizedArtist) - \(normalizedTitle)"
     }
 
-    nonisolated private static func fetchArtwork(title: String, artist: String) async -> NSImage? {
+    // MARK: - Disk cache
+
+    nonisolated private static let cacheDirectoryName = "Lyripeek"
+    nonisolated private static let artworkDirectoryName = "Artwork"
+    nonisolated private static let maxDiskImages = 200
+
+    /// Returns the on-disk artwork cache directory, creating it if needed.
+    /// `nonisolated` because `FileManager` is thread-safe and this is called
+    /// from background `Task` paths.
+    nonisolated private static var artworkCacheDirectory: URL? {
+        guard let base = try? FileManager.default.url(
+            for: .cachesDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        ) else { return nil }
+        let dir = base.appendingPathComponent(cacheDirectoryName, isDirectory: true)
+            .appendingPathComponent(artworkDirectoryName, isDirectory: true)
+        if !FileManager.default.fileExists(atPath: dir.path) {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        return dir
+    }
+
+    /// Filesystem-safe, stable slug for a cache key. Unlike
+    /// `String.hashValue` (randomized per launch), this is deterministic so
+    /// the same track always maps to the same file across launches.
+    nonisolated private static func slugify(_ key: String) -> String {
+        var slug = ""
+        var count = 0
+        let maxLength = 80
+        for char in key.lowercased() {
+            if char.isLetter || char.isNumber {
+                slug.append(char)
+            } else if slug.last != "_" {
+                slug.append("_")
+            }
+            count += 1
+            if count >= maxLength { break }
+        }
+        if slug.hasSuffix("_") { slug.removeLast() }
+        return slug.isEmpty ? "unknown" : slug
+    }
+
+    nonisolated private static func diskFileURL(for key: String) -> URL? {
+        guard let dir = artworkCacheDirectory else { return nil }
+        return dir.appendingPathComponent("\(slugify(key)).dat")
+    }
+
+    nonisolated private static func readFromDisk(key: String) async -> Data? {
+        guard let url = diskFileURL(for: key) else { return nil }
+        return try? Data(contentsOf: url)
+    }
+
+    /// Updates the file's modification date so the LRU eviction order reflects
+    /// recent access, not just write order.
+    nonisolated private static func touchDiskFile(key: String) async {
+        guard let url = diskFileURL(for: key) else { return }
+        try? FileManager.default.setAttributes(
+            [.modificationDate: Date()],
+            ofItemAtPath: url.path
+        )
+    }
+
+    nonisolated private static func writeToDisk(data: Data, key: String) async {
+        guard let url = diskFileURL(for: key) else { return }
+        try? data.write(to: url, options: [.atomic])
+        evictIfNeeded()
+    }
+
+    /// Deletes the oldest files (by modification date) until the directory
+    /// holds at most `maxDiskImages` entries. Called only after a network
+    /// write, so the hot path (memory/disk hit) pays no enumeration cost.
+    nonisolated private static func evictIfNeeded() {
+        guard let dir = artworkCacheDirectory else { return }
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: dir,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+
+        guard files.count > maxDiskImages else { return }
+
+        let sorted = files.sorted { a, b in
+            let aDate = (try? a.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let bDate = (try? b.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return aDate < bDate
+        }
+
+        for url in sorted.prefix(files.count - maxDiskImages) {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    // MARK: - iTunes API
+
+    nonisolated private static func fetchArtworkData(title: String, artist: String) async -> Data? {
         let query = "\(artist) \(title)"
             .trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return nil }
@@ -112,10 +233,10 @@ final class ArtworkService: ObservableObject {
             let (imageData, imageResponse) = try await URLSession.shared.data(from: imageURL)
             guard let imageResponse = imageResponse as? HTTPURLResponse,
                   (200..<300).contains(imageResponse.statusCode),
-                  let image = NSImage(data: imageData) else {
+                  !imageData.isEmpty else {
                 return nil
             }
-            return image
+            return imageData
         } catch {
             return nil
         }

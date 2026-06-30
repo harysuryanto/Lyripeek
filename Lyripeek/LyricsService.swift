@@ -17,6 +17,7 @@ final class LyricsService: ObservableObject {
     @Published private(set) var isLoading: Bool = false
     @Published private(set) var rawLRC: String = ""
     @Published private(set) var currentLineText: String = ""
+    @Published private(set) var nextLineText: String = ""
 
     private static let offsetDefaultsKey = "lyricsOffset"
 
@@ -35,9 +36,11 @@ final class LyricsService: ObservableObject {
         loadCacheFromDisk()
     }
 
-    /// Raw-LRC cache keyed by `artist - title`. The raw LRC is cached (not the
-    /// parsed `[LyricLine]`) so that `LyricLine.id` (a `UUID`) stays stable
-    /// only for the duration of a parse, and re-parse cost is negligible.
+    /// Raw-LRC cache keyed by `artist - title - album`. The raw LRC is cached
+    /// (not the parsed `[LyricLine]`) so that `LyricLine.id` (a `UUID`) stays
+    /// stable only for the duration of a parse, and re-parse cost is
+    /// negligible. Persisted to `~/Library/Caches/Lyripeek/lyrics-cache.json`
+    /// so macOS can purge it under disk pressure.
     private var cache: [String: String] = [:]
     private var pendingKey: String?
     private var currentTrack: (title: String, artist: String, album: String, duration: TimeInterval)?
@@ -49,7 +52,7 @@ final class LyricsService: ObservableObject {
     private static let cacheFileName = "lyrics-cache.json"
 
     /// Loads lyrics for the given track. Results are cached on disk by
-    /// `artist + title`.
+    /// `artist - title - album`.
     ///
     /// Fetches real synced lyrics from LRCLIB. If the request fails or returns
     /// no result, `lines` is left empty and nothing is cached, so a future
@@ -123,7 +126,7 @@ final class LyricsService: ObservableObject {
 
     private func cacheFileURL() -> URL? {
         guard let base = try? FileManager.default.url(
-            for: .applicationSupportDirectory,
+            for: .cachesDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
             create: true
@@ -251,9 +254,12 @@ final class LyricsService: ObservableObject {
         let index = currentLineIndex(lines: lines, currentTime: time - offset)
         guard lines.indices.contains(index) else {
             currentLineText = ""
+            nextLineText = ""
             return
         }
         currentLineText = lines[index].text
+        let nextIndex = index + 1
+        nextLineText = lines.indices.contains(nextIndex) ? lines[nextIndex].text : ""
     }
 
     private func cacheKey(title: String, artist: String, album: String) -> String {
@@ -266,7 +272,7 @@ final class LyricsService: ObservableObject {
 
 // MARK: - LRCLIB Models
 
-private struct LRCLIBResult: Codable {
+nonisolated private struct LRCLIBResult: Codable {
     let id: Int
     let name: String?
     let trackName: String?
