@@ -59,12 +59,15 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             self.statusItem?.length = NSStatusItem.variableLength
             self.statusItem?.length = targetWidth
         }
+        statusView.onRightClick = { [weak self] event in
+            self?.showContextMenu(from: event)
+        }
         statusView.twoLineMode = twoLineMode
         self.statusView = statusView
 
         // Embed the custom view inside the status bar button instead of using
         // the deprecated `statusItem.view`. The button handles left-click via
-        // its target/action; a right-click gesture recognizer is added below.
+        // its target/action; right-click is handled by the view's onRightClick closure.
         if let button = statusItem.button {
             button.image = nil
             button.title = ""
@@ -80,13 +83,6 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
             button.target = self
             button.action = #selector(statusBarButtonClicked)
-
-            let rightClick = NSClickGestureRecognizer(
-                target: self,
-                action: #selector(statusBarRightClicked(_:))
-            )
-            rightClick.buttonMask = 0x2
-            button.addGestureRecognizer(rightClick)
         }
 
         let popover = NSPopover()
@@ -151,11 +147,6 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
     @objc private func statusBarButtonClicked() {
         togglePopover()
-    }
-
-    @objc private func statusBarRightClicked(_ sender: NSGestureRecognizer) {
-        guard let event = NSApp.currentEvent else { return }
-        showContextMenu(from: event)
     }
 
     private func togglePopover() {
