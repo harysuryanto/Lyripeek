@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.2.0] - 2026-06-30
+
+### Added
+
+- 🎛️ Media playback controls in the popover (Previous Track, Play/Pause, Next Track)
+- 📝 Two-line mode for menu bar lyrics — shows current and next line, toggled from the popover footer
+- 🔐 Launch-at-login support via the context menu
+- 🔔 Update checker that checks GitHub releases daily at 22:00, with a download button and red-dot badge
+- ✋ Manual lyrics scrolling with a floating Sync button to resume auto-scroll
+- 💾 Disk-persisted artwork cache with 200-image LRU eviction under `~/Library/Caches`
+
+### Changed
+
+- 🔧 Migrated from deprecated `statusItem.view` to button embedding with Auto Layout
+- 🔧 Lyrics and artwork caches moved from `~/Library/Application Support` to `~/Library/Caches` so macOS can purge them under disk pressure and Time Machine skips them
+- 🔧 LRCLIB lyrics fetch now tries exact `/api/get` (album + duration) first, falling back to search
+- 🔧 iTunes artwork fetch gated on system artwork presence — skipped when the system already provides it
+- 🔧 Adaptive now-playing polling: 1 Hz while a track is playing, drops to 5 s when idle to reduce CPU and battery usage
+- 🔧 LRC timestamp regex cached at file level instead of recompiled on every call
+
+### Fixed
+
+- 🐛 Debug window no longer leaks a new `NSWindow` when reopened
+- 🐛 Removed duplicate `updateCurrentLine` calls when the popover was open
+
 ## [0.1.0] - 2026-06-27
 
 ### Added
