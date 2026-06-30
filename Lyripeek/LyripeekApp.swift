@@ -41,6 +41,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     album: track.album,
                     duration: track.duration
                 )
+                // Skip the iTunes artwork fetch when the system already
+                // provides artwork (the case for Spotify, Apple Music, and
+                // Kaset). NowPlayingCard prefers system artwork anyway, so
+                // the fetch would be wasted network + image decode. The
+                // trackChangedPublisher fires from applyTrack *after*
+                // nowPlayingService.artwork is set, so the check is current.
+                guard self.nowPlayingService.artwork == nil else { return }
                 self.artworkService.load(
                     title: track.title,
                     artist: track.artist
