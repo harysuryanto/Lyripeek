@@ -8,6 +8,15 @@
 import AppKit
 import Foundation
 
+/// A transport command the user can issue from the popover. Sources that
+/// can't handle a given command return `false` so the orchestrator can fall
+/// back to the system `MediaRemote` path.
+enum PlaybackCommand {
+    case playPause
+    case nextTrack
+    case previousTrack
+}
+
 /// Normalized track snapshot returned by any `PlayerSource`.
 ///
 /// `source` is the human-friendly display name (e.g. "Spotify", "Apple Music",
@@ -82,9 +91,18 @@ protocol PlayerSource: AnyObject {
     /// Most recent raw output (AppleScript stdout, JSON body, etc.). Useful
     /// for the debug window.
     var lastOutput: String { get }
+
+    /// Issues a transport command (play/pause, next, previous) to the
+    /// underlying app. Returns `true` when the command was accepted, `false`
+    /// when the source can't handle it (e.g. the app isn't running or doesn't
+    /// expose the verb). Must never throw; transient errors are swallowed.
+    func sendCommand(_ command: PlaybackCommand) async -> Bool
 }
 
 extension PlayerSource {
+    /// Default no-op so sources without a transport surface simply decline
+    /// and the orchestrator can fall back to the system `MediaRemote` path.
+    func sendCommand(_ command: PlaybackCommand) async -> Bool { false }
 }
 
 /// Strips common noise from a metadata string (e.g. "Song (Official Video)").

@@ -41,6 +41,33 @@ final class KasetPlayerSource: PlayerSource {
         return Self.parse(jsonString: output, source: displayName, bundleIdentifier: bundleIdentifier)
     }
 
+    /// Best-effort transport control. Kaset's AppleScript dictionary isn't
+    /// documented here, so we try the common media-player verbs and rely on
+    /// `runAppleScript` returning `nil` on a script error (unknown verb) to
+    /// signal "unsupported" — the orchestrator then falls back to the system
+    /// `MediaRemote` path.
+    func sendCommand(_ command: PlaybackCommand) async -> Bool {
+        let statement: String
+        switch command {
+        case .playPause: statement = "playpause"
+        case .nextTrack: statement = "next track"
+        case .previousTrack: statement = "previous track"
+        }
+        let script = """
+        tell application "Kaset"
+            if it is running then
+                \(statement)
+                return "ok"
+            end if
+        end tell
+        return ""
+        """
+        let output = await runAppleScript(script) { [weak self] err in
+            self?.lastError = err
+        }
+        return output != nil && !(output?.isEmpty ?? true)
+    }
+
     static func parse(jsonString: String, source: String, bundleIdentifier: String?) -> DesktopTrack? {
         let trimmed = jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,

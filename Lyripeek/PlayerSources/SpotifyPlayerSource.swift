@@ -45,6 +45,31 @@ final class SpotifyPlayerSource: PlayerSource {
         return Self.parse(output: output, source: displayName, bundleIdentifier: bundleIdentifier)
     }
 
+    func sendCommand(_ command: PlaybackCommand) async -> Bool {
+        let statement: String
+        switch command {
+        case .playPause: statement = "playpause"
+        case .nextTrack: statement = "next track"
+        case .previousTrack: statement = "previous track"
+        }
+        // Guard on `is running` so we never raise an AppleScript error when
+        // Spotify isn't open — the orchestrator can then fall back to the
+        // system `MediaRemote` path.
+        let script = """
+        tell application "Spotify"
+            if it is running then
+                \(statement)
+                return "ok"
+            end if
+        end tell
+        return ""
+        """
+        let output = await runAppleScript(script) { [weak self] err in
+            self?.lastError = err
+        }
+        return output != nil && !(output?.isEmpty ?? true)
+    }
+
     static func parse(output: String, source: String, bundleIdentifier: String?) -> DesktopTrack? {
         var trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }

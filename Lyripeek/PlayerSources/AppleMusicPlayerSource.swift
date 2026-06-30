@@ -44,4 +44,26 @@ final class AppleMusicPlayerSource: PlayerSource {
         lastOutput = output.isEmpty ? "<empty>" : output
         return SpotifyPlayerSource.parse(output: output, source: displayName, bundleIdentifier: bundleIdentifier)
     }
+
+    func sendCommand(_ command: PlaybackCommand) async -> Bool {
+        let statement: String
+        switch command {
+        case .playPause: statement = "playpause"
+        case .nextTrack: statement = "next track"
+        case .previousTrack: statement = "previous track"
+        }
+        let script = """
+        tell application "Music"
+            if it is running then
+                \(statement)
+                return "ok"
+            end if
+        end tell
+        return ""
+        """
+        let output = await runAppleScript(script) { [weak self] err in
+            self?.lastError = err
+        }
+        return output != nil && !(output?.isEmpty ?? true)
+    }
 }

@@ -58,10 +58,23 @@ final class NowPlayingService: ObservableObject {
     @Published private(set) var lastKasetOutput: String = ""
     @Published private(set) var lastParsedElapsedTime: TimeInterval = 0
     @Published private(set) var lastParsedDuration: TimeInterval = 0
+    /// True while the resolved track is actively playing (rate > 0). Bound to
+    /// the popover's play/pause button so the icon stays in sync with the
+    /// underlying player.
+    @Published private(set) var isPlaying: Bool = false
 
     /// Emitted whenever the playing track (title + artist) changes.
     var trackChangedPublisher: AnyPublisher<(title: String, artist: String, album: String, duration: TimeInterval), Never> {
         trackChangedSubject.eraseToAnyPublisher()
+    }
+
+    /// True when there is a resolved track the transport controls can act on.
+    /// Drives the disabled state of the play/pause/prev/next buttons; the app
+    /// has no queue visibility, so we can't distinguish "has next" from "no
+    /// next" — we enable all three while a track is active and let the source
+    /// app no-op when there's nothing to skip to.
+    var hasActiveTrack: Bool {
+        !title.isEmpty || !artist.isEmpty
     }
 
     /// Exposed for the debug window so it can iterate the registry.
@@ -224,6 +237,38 @@ final class NowPlayingService: ObservableObject {
         }
     }
 
+    // MARK: - Transport commands
+
+    /// Routes a transport command (play/pause, next, previous) to the source
+    /// owning the active track. Known AppleScript sources (Spotify, Apple
+    /// Music, Kaset) handle their own verbs; everything else (VLC, Safari,
+    /// Podcasts, …) falls through to the system source, which dispatches via
+    /// the private MediaRemote framework. After dispatching, the poll loop is
+    /// restarted so the UI reflects the new state within ~1s instead of
+    /// waiting for the next idle tick.
+    ///
+    /// Must be called on the main queue (it reads `sourceBundleIdentifier` and
+    /// calls `restartPollingForLaunch`); SwiftUI button actions satisfy this.
+    func sendPlaybackCommand(_ command: PlaybackCommand) {
+        let target = resolvedCommandSource()
+        Task { [weak self] in
+            _ = await target.sendCommand(command)
+            await MainActor.run { self?.restartPollingForLaunch() }
+        }
+    }
+
+    /// Picks the `PlayerSource` that should receive a transport command based
+    /// on the active track's `sourceBundleIdentifier`. Falls back to the
+    /// system source (MediaRemote) when the publisher isn't one of our
+    /// AppleScript-enriched apps or is unknown.
+    private func resolvedCommandSource() -> PlayerSource {
+        guard let bundleID = sourceBundleIdentifier else { return systemSource }
+        if spotifySource.bundleIdentifier == bundleID { return spotifySource }
+        if appleMusicSource.bundleIdentifier == bundleID { return appleMusicSource }
+        if kasetSource.bundleIdentifier == bundleID { return kasetSource }
+        return systemSource
+    }
+
     private func refresh() async {
         // Layer 1: system-wide MPNowPlayingInfoCenter. This is the source of
         // truth and works for any app that publishes to the system.
@@ -341,6 +386,7 @@ final class NowPlayingService: ObservableObject {
         sourceDescription = track.source
         sourceBundleIdentifier = track.bundleIdentifier
         self.artwork = artwork
+        isPlaying = !track.isPaused
 
         // --- Interpolation baseline ---
         // Rate of 0 means "paused" — the 10 Hz tick will treat this as a
@@ -442,6 +488,7 @@ final class NowPlayingService: ObservableObject {
         sourceDescription = ""
         sourceBundleIdentifier = nil
         artwork = nil
+        isPlaying = false
 
         // Reset interpolation + drift state so the next track starts fresh.
         // `lastActiveAt` is intentionally NOT reset here: keeping it lets the

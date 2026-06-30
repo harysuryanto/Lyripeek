@@ -43,6 +43,8 @@ struct NowPlayingCard: View {
                             .foregroundStyle(.secondary.opacity(0.85))
                             .help(subtitle)
                     }
+
+                    TransportControls()
                 }
 
                 Spacer(minLength: 0)

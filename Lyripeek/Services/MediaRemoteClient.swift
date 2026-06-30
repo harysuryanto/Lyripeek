@@ -11,6 +11,11 @@ import Darwin
 
 private typealias UnsafeMutableRawObject = UnsafeMutableRawPointer
 
+/// C function pointer for `MRMediaRemoteSendCommand`, the private MediaRemote
+/// entry point that dispatches a transport command to the active Now Playing
+/// app. Signature: `void MRMediaRemoteSendCommand(MRCommand, NSDictionary*)`.
+private typealias MRMediaRemoteSendCommandFunc = @convention(c) (Int32, NSDictionary?) -> Void
+
 /// Detects which app is currently publishing to macOS's Now Playing service
 /// so the popover can show a friendly source label (e.g. "Spotify", "VLC",
 /// "Safari", "Podcasts", "Audible").
@@ -37,6 +42,7 @@ final class MediaRemoteClient {
     private let handle: UnsafeMutableRawObject?
     private let pidSymbolAddress: UnsafeMutableRawObject?
     private let displaySymbolAddress: UnsafeMutableRawObject?
+    private let sendCommandSymbolAddress: UnsafeMutableRawObject?
 
     /// Bundle ids of the apps Lyripeek knows how to enrich via AppleScript
     /// (Spotify, Apple Music, Kaset). Used for two purposes:
@@ -77,11 +83,13 @@ final class MediaRemoteClient {
             NSLog("MediaRemoteClient: framework not loadable, using NSWorkspace fallback")
             self.pidSymbolAddress = nil
             self.displaySymbolAddress = nil
+            self.sendCommandSymbolAddress = nil
             return
         }
 
         let pidSymbol = dlsym(raw, "MRMediaRemoteGetNowPlayingApplicationPID")
         let displaySymbol = dlsym(raw, "MRMediaRemoteGetNowPlayingApplicationDisplayID")
+        let sendCommandSymbol = dlsym(raw, "MRMediaRemoteSendCommand")
 
         if pidSymbol == nil {
             NSLog("MediaRemoteClient: MRMediaRemoteGetNowPlayingApplicationPID not found")
@@ -89,12 +97,19 @@ final class MediaRemoteClient {
         if displaySymbol == nil {
             NSLog("MediaRemoteClient: MRMediaRemoteGetNowPlayingApplicationDisplayID not found")
         }
+        if sendCommandSymbol == nil {
+            NSLog("MediaRemoteClient: MRMediaRemoteSendCommand not found")
+        }
 
         // Keep the addresses for the debug UI; do NOT call them.
         // MRMediaRemoteGetNowPlayingApplicationPIDForOrigin crashes when
         // invoked from an unprivileged client. See class comment.
         self.pidSymbolAddress = pidSymbol
         self.displaySymbolAddress = displaySymbol
+        // `MRMediaRemoteSendCommand` is a different, commonly-invoked entry
+        // point used by media-key remappers without crashes, so it IS safe to
+        // call from `sendCommand(_:)` below.
+        self.sendCommandSymbolAddress = sendCommandSymbol
         self.isMediaRemoteAvailable = pidSymbol != nil
     }
 
@@ -118,6 +133,35 @@ final class MediaRemoteClient {
             return name
         }
         return "Now Playing"
+    }
+
+    // MARK: - Transport commands
+
+    /// Reverse-engineered `MRCommand` constants for the private MediaRemote
+    /// `MRMediaRemoteSendCommand` entry point. These are not in any public
+    /// header and were determined from widely-referenced MediaRemote reverse
+    /// engineering; if a command misroutes, this is the place to adjust.
+    private static let mrCommandTogglePlayPause: Int32 = 2
+    private static let mrCommandNextTrack: Int32 = 4
+    private static let mrCommandPreviousTrack: Int32 = 5
+
+    /// Dispatches a transport command to the active Now Playing app via the
+    /// private `MRMediaRemoteSendCommand`. Returns `true` when the symbol was
+    /// loaded and the call was dispatched, `false` when the MediaRemote
+    /// framework isn't available. Unlike the PID getter, this entry point is
+    /// safe to call from unprivileged clients (it's the same one media-key
+    /// remappers use) and routes to whichever app is currently publishing.
+    func sendCommand(_ command: PlaybackCommand) -> Bool {
+        guard let address = sendCommandSymbolAddress else { return false }
+        let rawCommand: Int32
+        switch command {
+        case .playPause: rawCommand = Self.mrCommandTogglePlayPause
+        case .nextTrack: rawCommand = Self.mrCommandNextTrack
+        case .previousTrack: rawCommand = Self.mrCommandPreviousTrack
+        }
+        let fn = unsafeBitCast(address, to: MRMediaRemoteSendCommandFunc.self)
+        fn(rawCommand, nil)
+        return true
     }
 
     // MARK: - Debug

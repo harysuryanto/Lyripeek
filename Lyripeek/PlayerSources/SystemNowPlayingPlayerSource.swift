@@ -58,6 +58,15 @@ final class SystemNowPlayingPlayerSource: PlayerSource {
         )
     }
 
+    /// Dispatches transport commands through the private MediaRemote framework
+    /// so any app publishing to the system Now Playing service (VLC, Safari,
+    /// Podcasts, Audible, …) is controllable, not just the AppleScript-enriched
+    /// ones. Returns `false` when MediaRemote isn't loadable so the orchestrator
+    /// knows no command was sent.
+    func sendCommand(_ command: PlaybackCommand) async -> Bool {
+        MediaRemoteClient.shared.sendCommand(command)
+    }
+
     nonisolated private static let artworkRenderSize = CGSize(width: 600, height: 600)
 
     nonisolated private static func makeImage(from raw: Any?) -> NSImage? {
