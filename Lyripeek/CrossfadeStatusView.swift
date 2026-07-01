@@ -22,22 +22,37 @@ final class CrossfadeStatusView: NSView {
         get { activeField.stringValue }
         set {
             guard newValue != activeField.stringValue else { return }
-            guard let incoming = inactiveField else { return }
             if twoLineMode, let newlineIndex = newValue.firstIndex(of: "\n") {
                 let currentLine = String(newValue[..<newlineIndex])
                 let nextLine = String(newValue[newlineIndex...].dropFirst())
-                let font = twoLineFont
                 let attrStr = NSMutableAttributedString(string: currentLine + "\n" + nextLine)
-                attrStr.addAttributes([.font: font], range: NSRange(location: 0, length: attrStr.length))
                 let nextStart = newValue.distance(from: newValue.startIndex, to: newlineIndex) + 1
                 attrStr.addAttributes(
                     [.foregroundColor: NSColor.labelColor.withAlphaComponent(0.5)],
                     range: NSRange(location: nextStart, length: nextLine.count)
                 )
-                incoming.attributedStringValue = attrStr
+                setAttributedText(attrStr)
             } else {
-                incoming.stringValue = newValue
+                setAttributedText(NSAttributedString(string: newValue))
             }
+        }
+    }
+
+    func setAttributedText(_ newValue: NSAttributedString) {
+        guard let incoming = inactiveField else { return }
+        
+        let mutableValue = NSMutableAttributedString(attributedString: newValue)
+        let font = twoLineMode ? twoLineFont : singleLineFont
+        mutableValue.addAttributes([.font: font], range: NSRange(location: 0, length: mutableValue.length))
+        
+        if mutableValue.string == activeField.attributedStringValue.string {
+            activeField.attributedStringValue = mutableValue
+            activeField.sizeToFit()
+            needsLayout = true
+            invalidateIntrinsicContentSize()
+            onContentResize?()
+        } else {
+            incoming.attributedStringValue = mutableValue
             incoming.sizeToFit()
             transition(to: incoming)
         }

@@ -27,13 +27,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         didSet {
             guard twoLineMode != oldValue else { return }
             statusView?.twoLineMode = twoLineMode
-            updateMenuBarTitle(
-                isLoading: lyricsService?.isLoading ?? false,
-                lineText: lyricsService?.currentLineText ?? "",
-                nextLineText: lyricsService?.nextLineText ?? "",
-                hasNoLyrics: lyricsService?.hasNoLyrics ?? false,
-                fetchFailed: lyricsService?.fetchFailed ?? false
-            )
+            triggerMenuBarUpdate()
         }
     }
 
@@ -109,15 +103,21 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         self.statusItem = statusItem
         self.popover = popover
 
-        lyricsService.$isLoading
-            .combineLatest(lyricsService.$currentLineText, lyricsService.$nextLineText)
-            .combineLatest(lyricsService.$hasNoLyrics, lyricsService.$fetchFailed)
+        let lyricsPublisher = lyricsService.$lines
+            .combineLatest(lyricsService.$isLoading, lyricsService.$nextLineText)
+            .combineLatest(lyricsService.$hasNoLyrics, lyricsService.$fetchFailed, lyricsService.$offset)
+
+        nowPlayingService.$elapsedTime
+            .combineLatest(lyricsPublisher)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] tuple, hasNoLyrics, fetchFailed in
-                let (isLoading, lineText, nextLineText) = tuple
+            .sink { [weak self] elapsedTime, lyricsTuple in
+                let (firstThree, hasNoLyrics, fetchFailed, offset) = lyricsTuple
+                let (lines, isLoading, nextLineText) = firstThree
                 self?.updateMenuBarTitle(
                     isLoading: isLoading,
-                    lineText: lineText,
+                    lines: lines,
+                    currentTime: elapsedTime,
+                    offset: offset,
                     nextLineText: nextLineText,
                     hasNoLyrics: hasNoLyrics,
                     fetchFailed: fetchFailed
@@ -141,7 +141,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
     private func updateMenuBarTitle(
         isLoading: Bool,
-        lineText: String,
+        lines: [LyricLine],
+        currentTime: TimeInterval,
+        offset: TimeInterval,
         nextLineText: String,
         hasNoLyrics: Bool,
         fetchFailed: Bool
@@ -149,18 +151,69 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         guard let statusView else { return }
 
         if isLoading {
-            statusView.text = "Fetching lyrics…"
+            statusView.setAttributedText(NSAttributedString(string: "Fetching lyrics…"))
         } else if fetchFailed {
-            statusView.text = "Failed to fetch lyrics"
+            statusView.setAttributedText(NSAttributedString(string: "Failed to fetch lyrics"))
         } else if hasNoLyrics {
-            statusView.text = "Can't find synced lyrics"
-        } else if lineText.isEmpty {
-            statusView.text = ""
-        } else if twoLineMode && !nextLineText.isEmpty {
-            statusView.text = "\(lineText)\n\(nextLineText)"
+            statusView.setAttributedText(NSAttributedString(string: "Can't find synced lyrics"))
+        } else if lines.isEmpty {
+            statusView.setAttributedText(NSAttributedString(string: ""))
         } else {
-            statusView.text = lineText
+            let adjustedTime = currentTime - offset
+            let index = currentLineIndex(lines: lines, currentTime: adjustedTime)
+
+            guard lines.indices.contains(index) else {
+                statusView.setAttributedText(NSAttributedString(string: ""))
+                return
+            }
+
+            let line = lines[index]
+            let attrStr = NSMutableAttributedString()
+
+            if !line.words.isEmpty {
+                for (wIndex, word) in line.words.enumerated() {
+                    let isWordActive = adjustedTime >= word.startTime
+                    let color = isWordActive
+                        ? NSColor.labelColor
+                        : NSColor.labelColor.withAlphaComponent(0.4)
+
+                    let part = NSMutableAttributedString(string: word.text)
+                    part.addAttributes([.foregroundColor: color], range: NSRange(location: 0, length: part.length))
+
+                    if wIndex > 0 {
+                        attrStr.append(NSAttributedString(string: " "))
+                    }
+                    attrStr.append(part)
+                }
+            } else {
+                attrStr.append(NSAttributedString(string: line.text))
+            }
+
+            if twoLineMode && !nextLineText.isEmpty {
+                attrStr.append(NSAttributedString(string: "\n"))
+                let nextPart = NSMutableAttributedString(string: nextLineText)
+                nextPart.addAttributes(
+                    [.foregroundColor: NSColor.labelColor.withAlphaComponent(0.4)],
+                    range: NSRange(location: 0, length: nextPart.length)
+                )
+                attrStr.append(nextPart)
+            }
+
+            statusView.setAttributedText(attrStr)
         }
+    }
+
+    private func triggerMenuBarUpdate() {
+        guard let lyricsService, let nowPlayingService else { return }
+        updateMenuBarTitle(
+            isLoading: lyricsService.isLoading,
+            lines: lyricsService.lines,
+            currentTime: nowPlayingService.elapsedTime,
+            offset: lyricsService.offset,
+            nextLineText: lyricsService.nextLineText,
+            hasNoLyrics: lyricsService.hasNoLyrics,
+            fetchFailed: lyricsService.fetchFailed
+        )
     }
 
     // MARK: - Click handling via button target/action
@@ -255,14 +308,6 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         isPopoverOpen = false
         statusItem?.length = NSStatusItem.variableLength
 
-        if let lyricsService {
-            updateMenuBarTitle(
-                isLoading: lyricsService.isLoading,
-                lineText: lyricsService.currentLineText,
-                nextLineText: lyricsService.nextLineText,
-                hasNoLyrics: lyricsService.hasNoLyrics,
-                fetchFailed: lyricsService.fetchFailed
-            )
-        }
+        triggerMenuBarUpdate()
     }
 }
