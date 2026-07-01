@@ -89,6 +89,11 @@ final class CrossfadeStatusView: NSView {
         addSubview(iconViewA)
         addSubview(iconViewB)
 
+        #if DEBUG
+        iconViewA.contentTintColor = .systemRed
+        iconViewB.contentTintColor = .systemRed
+        #endif
+
         for field in [textFieldA, textFieldB] {
             field.isBezeled = false
             field.isBordered = false
