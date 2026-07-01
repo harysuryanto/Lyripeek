@@ -30,7 +30,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             updateMenuBarTitle(
                 isLoading: lyricsService?.isLoading ?? false,
                 lineText: lyricsService?.currentLineText ?? "",
-                nextLineText: lyricsService?.nextLineText ?? ""
+                nextLineText: lyricsService?.nextLineText ?? "",
+                hasNoLyrics: lyricsService?.hasNoLyrics ?? false,
+                fetchFailed: lyricsService?.fetchFailed ?? false
             )
         }
     }
@@ -109,9 +111,17 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
         lyricsService.$isLoading
             .combineLatest(lyricsService.$currentLineText, lyricsService.$nextLineText)
+            .combineLatest(lyricsService.$hasNoLyrics, lyricsService.$fetchFailed)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] isLoading, lineText, nextLineText in
-                self?.updateMenuBarTitle(isLoading: isLoading, lineText: lineText, nextLineText: nextLineText)
+            .sink { [weak self] tuple, hasNoLyrics, fetchFailed in
+                let (isLoading, lineText, nextLineText) = tuple
+                self?.updateMenuBarTitle(
+                    isLoading: isLoading,
+                    lineText: lineText,
+                    nextLineText: nextLineText,
+                    hasNoLyrics: hasNoLyrics,
+                    fetchFailed: fetchFailed
+                )
             }
             .store(in: &cancellables)
 
@@ -129,11 +139,21 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             .store(in: &cancellables)
     }
 
-    private func updateMenuBarTitle(isLoading: Bool, lineText: String, nextLineText: String) {
+    private func updateMenuBarTitle(
+        isLoading: Bool,
+        lineText: String,
+        nextLineText: String,
+        hasNoLyrics: Bool,
+        fetchFailed: Bool
+    ) {
         guard let statusView else { return }
 
         if isLoading {
             statusView.text = "Fetching lyrics…"
+        } else if fetchFailed {
+            statusView.text = "Failed to fetch lyrics"
+        } else if hasNoLyrics {
+            statusView.text = "Can't find synced lyrics"
         } else if lineText.isEmpty {
             statusView.text = ""
         } else if twoLineMode && !nextLineText.isEmpty {
@@ -239,7 +259,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             updateMenuBarTitle(
                 isLoading: lyricsService.isLoading,
                 lineText: lyricsService.currentLineText,
-                nextLineText: lyricsService.nextLineText
+                nextLineText: lyricsService.nextLineText,
+                hasNoLyrics: lyricsService.hasNoLyrics,
+                fetchFailed: lyricsService.fetchFailed
             )
         }
     }

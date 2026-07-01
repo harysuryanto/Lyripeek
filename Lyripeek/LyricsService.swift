@@ -18,6 +18,12 @@ final class LyricsService: ObservableObject {
     @Published private(set) var rawLRC: String = ""
     @Published private(set) var currentLineText: String = ""
     @Published private(set) var nextLineText: String = ""
+    @Published private(set) var hasNoLyrics: Bool = false
+    @Published private(set) var fetchFailed: Bool = false
+
+    // SWITCHABLE PROVIDER: Uncomment the provider you want to use.
+    private let provider: LyricsProvider = LRCLIBProvider()
+    // private let provider: LyricsProvider = LyricaProvider()
 
     private static let offsetDefaultsKey = "lyricsOffset"
 
@@ -77,33 +83,47 @@ final class LyricsService: ObservableObject {
         }
 
         isLoading = true
+        hasNoLyrics = false
+        fetchFailed = false
         lines = []
         rawLRC = ""
 
         Task { [weak self] in
-            guard let realLRC = await Self.fetchLRCLIBLyrics(
-                title: title,
-                artist: artist,
-                album: album,
-                duration: duration
-            ) else {
+            guard let provider = self?.provider else { return }
+            do {
+                if let realLRC = try await provider.fetchLyrics(
+                    title: title,
+                    artist: artist,
+                    album: album,
+                    duration: duration
+                ) {
+                    let parsed = parseLRC(realLRC)
+                    await MainActor.run {
+                        guard let self else { return }
+                        self.cache[key] = realLRC
+                        self.saveCacheToDisk()
+                        self.lines = parsed
+                        self.rawLRC = realLRC
+                        self.isLoading = false
+                        self.hasNoLyrics = parsed.isEmpty
+                        self.fetchFailed = false
+                        self.pendingKey = nil
+                    }
+                } else {
+                    await MainActor.run {
+                        self?.isLoading = false
+                        self?.hasNoLyrics = true
+                        self?.fetchFailed = false
+                        self?.pendingKey = nil
+                    }
+                }
+            } catch {
                 await MainActor.run {
                     self?.isLoading = false
+                    self?.hasNoLyrics = false
+                    self?.fetchFailed = true
                     self?.pendingKey = nil
                 }
-                return
-            }
-
-            let parsed = parseLRC(realLRC)
-
-            await MainActor.run {
-                guard let self else { return }
-                self.cache[key] = realLRC
-                self.saveCacheToDisk()
-                self.lines = parsed
-                self.rawLRC = realLRC
-                self.isLoading = false
-                self.pendingKey = nil
             }
         }
     }
@@ -158,99 +178,7 @@ final class LyricsService: ObservableObject {
         try? data.write(to: url, options: [.atomic])
     }
 
-    // MARK: - LRCLIB API
-
-    /// Fetches synced lyrics from LRCLIB. Tries the exact `/api/get` endpoint
-    /// first (matching track name, artist, album, and duration), then falls
-    /// back to the fuzzy `/api/search` endpoint. Returns the synced LRC text,
-    /// or `nil` if neither path finds synced lyrics.
-    nonisolated private static func fetchLRCLIBLyrics(
-        title: String,
-        artist: String,
-        album: String,
-        duration: TimeInterval
-    ) async -> String? {
-        if let exact = await fetchExact(
-            title: title,
-            artist: artist,
-            album: album,
-            duration: duration
-        ) {
-            return exact
-        }
-        return await fetchSearch(title: title, artist: artist)
-    }
-
-    /// Exact-match lookup via `/api/get`. Returns a single matched track, not
-    /// an array. Skipped when `duration <= 0` because the endpoint requires a
-    /// duration and a wrong one would reduce match quality. The endpoint
-    /// accepts an empty `album_name` and has built-in duration tolerance.
-    nonisolated private static func fetchExact(
-        title: String,
-        artist: String,
-        album: String,
-        duration: TimeInterval
-    ) async -> String? {
-        guard duration > 0 else { return nil }
-        guard !title.isEmpty || !artist.isEmpty else { return nil }
-
-        var components = URLComponents(string: "https://lrclib.net/api/get")!
-        components.queryItems = [
-            URLQueryItem(name: "track_name", value: title),
-            URLQueryItem(name: "artist_name", value: artist),
-            URLQueryItem(name: "album_name", value: album),
-            URLQueryItem(name: "duration", value: String(Int(duration.rounded())))
-        ]
-
-        guard let url = components.url else { return nil }
-
-        var request = URLRequest(url: url)
-        request.setValue("Lyripeek/0.1.0 (https://github.com/)", forHTTPHeaderField: "User-Agent")
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200..<300).contains(httpResponse.statusCode) else {
-                return nil
-            }
-
-            let result = try JSONDecoder().decode(LRCLIBResult.self, from: data)
-            return result.hasSyncedLyrics ? result.syncedLyrics : nil
-        } catch {
-            return nil
-        }
-    }
-
-    /// Fuzzy search via `/api/search`. Used as the fallback when the exact
-    /// lookup finds nothing (e.g. duration unknown, or the track isn't in
-    /// LRCLIB's indexed albums). Returns the first result with synced lyrics.
-    nonisolated private static func fetchSearch(title: String, artist: String) async -> String? {
-        guard !title.isEmpty || !artist.isEmpty else { return nil }
-
-        let query = "\(artist) \(title)".trimmingCharacters(in: .whitespaces)
-        var components = URLComponents(string: "https://lrclib.net/api/search")!
-        components.queryItems = [URLQueryItem(name: "q", value: query)]
-
-        guard let url = components.url else { return nil }
-
-        var request = URLRequest(url: url)
-        request.setValue("Lyripeek/0.1.0 (https://github.com/)", forHTTPHeaderField: "User-Agent")
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200..<300).contains(httpResponse.statusCode) else {
-                return nil
-            }
-
-            let results = try JSONDecoder().decode([LRCLIBResult].self, from: data)
-            return results.first { $0.hasSyncedLyrics }?.syncedLyrics
-        } catch {
-            return nil
-        }
-    }
+    // MARK: - Helper Methods
 
     /// Updates `currentLineText` to the lyric line active at `time`, taking
     /// the user-adjustable `offset` into account.
@@ -274,22 +202,176 @@ final class LyricsService: ObservableObject {
     }
 }
 
-// MARK: - LRCLIB Models
+// MARK: - Lyrics Provider Architecture
 
-nonisolated private struct LRCLIBResult: Codable {
-    let id: Int
-    let name: String?
-    let trackName: String?
-    let artistName: String?
-    let albumName: String?
-    let duration: Double?
-    let instrumental: Bool?
-    let plainLyrics: String?
-    let syncedLyrics: String?
+protocol LyricsProvider {
+    func fetchLyrics(
+        title: String,
+        artist: String,
+        album: String,
+        duration: TimeInterval
+    ) async throws -> String?
+}
 
-    nonisolated var hasSyncedLyrics: Bool {
-        guard !(instrumental ?? false) else { return false }
-        guard let syncedLyrics else { return false }
-        return !syncedLyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+// MARK: - LRCLIB Provider
+
+struct LRCLIBProvider: LyricsProvider {
+    func fetchLyrics(
+        title: String,
+        artist: String,
+        album: String,
+        duration: TimeInterval
+    ) async throws -> String? {
+        do {
+            if let exact = try await fetchExact(
+                title: title,
+                artist: artist,
+                album: album,
+                duration: duration
+            ) {
+                return exact
+            }
+        } catch {
+            // Fallback to search if exact match has an error
+        }
+        return try await fetchSearch(title: title, artist: artist)
+    }
+
+    private func fetchExact(
+        title: String,
+        artist: String,
+        album: String,
+        duration: TimeInterval
+    ) async throws -> String? {
+        guard duration > 0 else { return nil }
+        guard !title.isEmpty || !artist.isEmpty else { return nil }
+
+        var components = URLComponents(string: "https://lrclib.net/api/get")!
+        components.queryItems = [
+            URLQueryItem(name: "track_name", value: title),
+            URLQueryItem(name: "artist_name", value: artist),
+            URLQueryItem(name: "album_name", value: album),
+            URLQueryItem(name: "duration", value: String(Int(duration.rounded())))
+        ]
+
+        guard let url = components.url else { return nil }
+
+        var request = URLRequest(url: url)
+        request.setValue("Lyripeek/0.1.0 (https://github.com/)", forHTTPHeaderField: "User-Agent")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+
+        if httpResponse.statusCode == 404 {
+            return nil
+        }
+
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+
+        let result = try JSONDecoder().decode(LRCLIBResult.self, from: data)
+        return result.hasSyncedLyrics ? result.syncedLyrics : nil
+    }
+
+    private func fetchSearch(title: String, artist: String) async throws -> String? {
+        guard !title.isEmpty || !artist.isEmpty else { return nil }
+
+        let query = "\(artist) \(title)".trimmingCharacters(in: .whitespaces)
+        var components = URLComponents(string: "https://lrclib.net/api/search")!
+        components.queryItems = [URLQueryItem(name: "q", value: query)]
+
+        guard let url = components.url else { return nil }
+
+        var request = URLRequest(url: url)
+        request.setValue("Lyripeek/0.1.0 (https://github.com/)", forHTTPHeaderField: "User-Agent")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+
+        if httpResponse.statusCode == 404 {
+            return nil
+        }
+
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+
+        let results = try JSONDecoder().decode([LRCLIBResult].self, from: data)
+        return results.first { $0.hasSyncedLyrics }?.syncedLyrics
+    }
+
+    private struct LRCLIBResult: Codable {
+        let instrumental: Bool?
+        let syncedLyrics: String?
+
+        var hasSyncedLyrics: Bool {
+            guard !(instrumental ?? false) else { return false }
+            guard let syncedLyrics else { return false }
+            return !syncedLyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+}
+
+// MARK: - Lyrica Provider
+
+struct LyricaProvider: LyricsProvider {
+    func fetchLyrics(
+        title: String,
+        artist: String,
+        album: String,
+        duration: TimeInterval
+    ) async throws -> String? {
+        guard !title.isEmpty || !artist.isEmpty else { return nil }
+
+        var components = URLComponents(string: "https://wilooper-lyrica.hf.space/lyrics/")!
+        components.queryItems = [
+            URLQueryItem(name: "song", value: title),
+            URLQueryItem(name: "artist", value: artist),
+            URLQueryItem(name: "timestamps", value: "true")
+        ]
+
+        guard let url = components.url else { return nil }
+
+        var request = URLRequest(url: url)
+        request.setValue("Lyripeek/0.1.0 (https://github.com/)", forHTTPHeaderField: "User-Agent")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+
+        if httpResponse.statusCode == 404 {
+            return nil
+        }
+
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+
+        let result = try JSONDecoder().decode(LyricaResponse.self, from: data)
+        guard let lyricaData = result.data,
+              lyricaData.hasTimestamps == true,
+              let lyrics = lyricaData.lyrics else {
+            return nil
+        }
+        return lyrics
+    }
+
+    private struct LyricaResponse: Codable {
+        let data: LyricaData?
+        let status: String
+    }
+
+    private struct LyricaData: Codable {
+        let hasTimestamps: Bool?
+        let lyrics: String?
     }
 }
