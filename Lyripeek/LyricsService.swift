@@ -23,10 +23,12 @@ final class LyricsService: ObservableObject {
     @Published private(set) var lastFetchURL: URL? = nil
     @Published private(set) var lyricsSource: String = ""
 
-    // SWITCHABLE PROVIDER: Uncomment the provider you want to use.
-    // private let provider: LyricsProvider = LRCLIBProvider()
-    // private let provider: LyricsProvider = LyricaProvider()
-    private let provider: LyricsProvider = LRCMuxProvider()
+    // POOLED PROVIDERS: Tried sequentially from first to last.
+    private let providers: [LyricsProvider] = [
+        LRCMuxProvider(),
+        LyricaProvider(),
+        LRCLIBProvider()
+    ]
 
     private static let offsetDefaultsKey = "lyricsOffset"
 
@@ -74,7 +76,7 @@ final class LyricsService: ObservableObject {
         let key = cacheKey(title: title, artist: artist, album: album)
 
         currentTrack = (title: title, artist: artist, album: album, duration: duration)
-        lastFetchURL = provider.lyricsURL(title: title, artist: artist, album: album, duration: duration)
+        lastFetchURL = providers.first?.lyricsURL(title: title, artist: artist, album: album, duration: duration)
 
         guard key != pendingKey else { return }
         pendingKey = key
@@ -95,45 +97,77 @@ final class LyricsService: ObservableObject {
         rawLRC = ""
 
         Task { [weak self] in
-            guard let provider = self?.provider else { return }
-            do {
-                if let result = try await provider.fetchLyrics(
-                    title: title,
-                    artist: artist,
-                    album: album,
-                    duration: duration
-                ) {
-                    let (realLRC, source) = result
-                    let parsed = parseLRC(realLRC)
-                    await MainActor.run {
-                        guard let self else { return }
-                        let cachedLRCWithSource = "[re:\(source)]\n" + realLRC
-                        self.cache[key] = cachedLRCWithSource
-                        self.saveCacheToDisk()
-                        self.lines = parsed
-                        self.rawLRC = realLRC
-                        self.lyricsSource = source.capitalized
-                        self.isLoading = false
-                        self.hasNoLyrics = parsed.isEmpty
-                        self.fetchFailed = false
-                        self.pendingKey = nil
-                    }
-                } else {
-                    await MainActor.run {
-                        self?.isLoading = false
-                        self?.hasNoLyrics = true
-                        self?.fetchFailed = false
-                        self?.lyricsSource = ""
-                        self?.pendingKey = nil
-                    }
+            guard let self = self else { return }
+
+            var fetchSuccess = false
+            var lastError: Error? = nil
+
+            for provider in self.providers {
+                // Ensure we are still fetching the same track before trying the next provider
+                let isSameTrack = await MainActor.run {
+                    self.currentTrack?.title == title &&
+                    self.currentTrack?.artist == artist &&
+                    self.currentTrack?.album == album
                 }
-            } catch {
+                guard isSameTrack else { return }
+
+                let currentURL = provider.lyricsURL(title: title, artist: artist, album: album, duration: duration)
                 await MainActor.run {
-                    self?.isLoading = false
-                    self?.hasNoLyrics = false
-                    self?.fetchFailed = true
-                    self?.lyricsSource = ""
-                    self?.pendingKey = nil
+                    self.lastFetchURL = currentURL
+                }
+
+                do {
+                    if let result = try await provider.fetchLyrics(
+                        title: title,
+                        artist: artist,
+                        album: album,
+                        duration: duration
+                    ) {
+                        let (realLRC, source) = result
+                        let parsed = parseLRC(realLRC)
+                        await MainActor.run {
+                            guard self.currentTrack?.title == title,
+                                  self.currentTrack?.artist == artist,
+                                  self.currentTrack?.album == album else {
+                                return
+                            }
+                            let cachedLRCWithSource = "[re:\(source)]\n" + realLRC
+                            self.cache[key] = cachedLRCWithSource
+                            self.saveCacheToDisk()
+                            self.lines = parsed
+                            self.rawLRC = realLRC
+                            self.lyricsSource = source.capitalized
+                            self.isLoading = false
+                            self.hasNoLyrics = parsed.isEmpty
+                            self.fetchFailed = false
+                            self.pendingKey = nil
+                        }
+                        fetchSuccess = true
+                        break
+                    }
+                } catch {
+                    lastError = error
+                }
+            }
+
+            if !fetchSuccess {
+                await MainActor.run {
+                    guard self.currentTrack?.title == title,
+                          self.currentTrack?.artist == artist,
+                          self.currentTrack?.album == album else {
+                        return
+                    }
+                    self.isLoading = false
+                    self.pendingKey = nil
+                    self.lyricsSource = ""
+                    
+                    if let _ = lastError {
+                        self.fetchFailed = true
+                        self.hasNoLyrics = false
+                    } else {
+                        self.hasNoLyrics = true
+                        self.fetchFailed = false
+                    }
                 }
             }
         }
