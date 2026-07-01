@@ -93,15 +93,33 @@ struct DebugWindow: View {
                     .padding(16)
             }
         case .lrc:
-            ScrollView {
-                Text(lyricsService.rawLRC.isEmpty
-                     ? "<no LRC loaded>"
-                     : lyricsService.rawLRC)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(.primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-                    .padding(16)
+            VStack(alignment: .leading, spacing: 0) {
+                if let url = lyricsService.lastFetchURL {
+                    HStack {
+                        Spacer()
+                        Button("Inspect Raw JSON") {
+                            NSWorkspace.shared.open(url)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .tint(.red)
+                        .foregroundStyle(.red)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .padding(.bottom, 6)
+                }
+
+                ScrollView {
+                    Text(lyricsService.rawLRC.isEmpty
+                         ? "<no LRC loaded>"
+                         : lyricsService.rawLRC)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding(16)
+                }
             }
         case .about:
             AboutTab()

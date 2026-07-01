@@ -24,7 +24,8 @@ final class LyricsService: ObservableObject {
 
     // SWITCHABLE PROVIDER: Uncomment the provider you want to use.
     // private let provider: LyricsProvider = LRCLIBProvider()
-    private let provider: LyricsProvider = LyricaProvider()
+    // private let provider: LyricsProvider = LyricaProvider()
+    private let provider: LyricsProvider = LRCMuxProvider()
 
     private static let offsetDefaultsKey = "lyricsOffset"
 
@@ -72,6 +73,7 @@ final class LyricsService: ObservableObject {
         let key = cacheKey(title: title, artist: artist, album: album)
 
         currentTrack = (title: title, artist: artist, album: album, duration: duration)
+        lastFetchURL = provider.lyricsURL(title: title, artist: artist, album: album, duration: duration)
 
         guard key != pendingKey else { return }
         pendingKey = key
@@ -86,7 +88,6 @@ final class LyricsService: ObservableObject {
         isLoading = true
         hasNoLyrics = false
         fetchFailed = false
-        lastFetchURL = provider.lyricsURL(title: title, artist: artist, album: album, duration: duration)
         lines = []
         rawLRC = ""
 
@@ -422,5 +423,63 @@ struct LyricaProvider: LyricsProvider {
     private struct LyricaData: Codable {
         let hasTimestamps: Bool?
         let lyrics: String?
+    }
+}
+
+// MARK: - LRCMux Provider
+
+struct LRCMuxProvider: LyricsProvider {
+    func lyricsURL(
+        title: String,
+        artist: String,
+        album: String,
+        duration: TimeInterval
+    ) -> URL? {
+        guard !title.isEmpty || !artist.isEmpty else { return nil }
+        var components = URLComponents(string: "https://lrcmux.dev/api/get")!
+        var queryItems = [
+            URLQueryItem(name: "title", value: title),
+            URLQueryItem(name: "artist", value: artist),
+            URLQueryItem(name: "format", value: "lrc")
+        ]
+        if !album.isEmpty {
+            queryItems.append(URLQueryItem(name: "album", value: album))
+        }
+        if duration > 0 {
+            queryItems.append(URLQueryItem(name: "duration", value: String(Int(duration.rounded()))))
+        }
+        components.queryItems = queryItems
+        return components.url
+    }
+
+    func fetchLyrics(
+        title: String,
+        artist: String,
+        album: String,
+        duration: TimeInterval
+    ) async throws -> String? {
+        guard let url = lyricsURL(title: title, artist: artist, album: album, duration: duration) else { return nil }
+
+        var request = URLRequest(url: url)
+        request.setValue("Lyripeek/0.1.0 (https://github.com/)", forHTTPHeaderField: "User-Agent")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+
+        if httpResponse.statusCode == 404 {
+            return nil
+        }
+
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+
+        guard let text = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return text
     }
 }

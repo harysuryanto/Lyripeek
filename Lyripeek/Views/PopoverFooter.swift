@@ -44,9 +44,6 @@ struct PopoverFooter: View {
             offsetControl
             Spacer(minLength: 4)
             refetchButton
-            if let url = lyricsService.lastFetchURL {
-                inspectRawButton(for: url)
-            }
             animateToggle
             twoLineToggle
             debugButton
@@ -165,17 +162,5 @@ struct PopoverFooter: View {
         }
         .buttonStyle(.borderless)
         .help("Quit Lyripeek (⌘Q)")
-    }
-
-    private func inspectRawButton(for url: URL) -> some View {
-        Button {
-            NSWorkspace.shared.open(url)
-        } label: {
-            Image(systemName: "curlybraces")
-                .font(.system(size: 12, weight: .medium))
-                .frame(width: 24, height: 24)
-        }
-        .buttonStyle(.borderless)
-        .help("Inspect Raw API JSON")
     }
 }
