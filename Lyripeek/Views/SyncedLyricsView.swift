@@ -114,6 +114,7 @@ struct SyncedLyricsView: View {
 
     // MARK: - Line
 
+    @ViewBuilder
     private func lyricLineView(line: LyricLine, index: Int) -> some View {
         let isCurrent = index == currentIndex
         let distance = abs(index - currentIndex)
@@ -121,13 +122,26 @@ struct SyncedLyricsView: View {
         let futureOpacity: Double = index < currentIndex ? pastOpacity : (distance == 1 ? 0.7 : 0.45)
         let opacity: Double = isCurrent ? 1.0 : futureOpacity
 
-        return Text(line.text.isEmpty ? "♪" : line.text)
-            .font(.system(size: 17, weight: .regular))
-            .foregroundStyle(lineStyle(isCurrent: isCurrent, opacity: opacity))
+        if isCurrent && !line.words.isEmpty {
+            line.words.reduce(Text("")) { (result, word) -> Text in
+                let isWordActive = nowPlayingService.elapsedTime >= (word.startTime)
+                let wordColor = isWordActive ? Color.accentColor : Color.primary.opacity(0.45)
+                let wordText = Text(word.text).foregroundColor(wordColor)
+                return result + (result == Text("") ? Text("") : Text(" ")) + wordText
+            }
+            .font(.system(size: 17, weight: .semibold))
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 3)
-            .animation(.easeInOut(duration: 0.25), value: isCurrent)
+        } else {
+            Text(line.text.isEmpty ? "♪" : line.text)
+                .font(.system(size: 17, weight: .regular))
+                .foregroundStyle(lineStyle(isCurrent: isCurrent, opacity: opacity))
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 3)
+                .animation(.easeInOut(duration: 0.25), value: isCurrent)
+        }
     }
 
     /// Active line uses the system accent color at full opacity; all other
