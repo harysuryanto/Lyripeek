@@ -20,10 +20,11 @@ final class LyricsService: ObservableObject {
     @Published private(set) var nextLineText: String = ""
     @Published private(set) var hasNoLyrics: Bool = false
     @Published private(set) var fetchFailed: Bool = false
+    @Published private(set) var lastFetchURL: URL? = nil
 
     // SWITCHABLE PROVIDER: Uncomment the provider you want to use.
-    private let provider: LyricsProvider = LRCLIBProvider()
-    // private let provider: LyricsProvider = LyricaProvider()
+    // private let provider: LyricsProvider = LRCLIBProvider()
+    private let provider: LyricsProvider = LyricaProvider()
 
     private static let offsetDefaultsKey = "lyricsOffset"
 
@@ -85,6 +86,7 @@ final class LyricsService: ObservableObject {
         isLoading = true
         hasNoLyrics = false
         fetchFailed = false
+        lastFetchURL = provider.lyricsURL(title: title, artist: artist, album: album, duration: duration)
         lines = []
         rawLRC = ""
 
@@ -211,11 +213,42 @@ protocol LyricsProvider {
         album: String,
         duration: TimeInterval
     ) async throws -> String?
+
+    func lyricsURL(
+        title: String,
+        artist: String,
+        album: String,
+        duration: TimeInterval
+    ) -> URL?
 }
 
 // MARK: - LRCLIB Provider
 
 struct LRCLIBProvider: LyricsProvider {
+    func lyricsURL(
+        title: String,
+        artist: String,
+        album: String,
+        duration: TimeInterval
+    ) -> URL? {
+        if duration > 0, !title.isEmpty || !artist.isEmpty {
+            var components = URLComponents(string: "https://lrclib.net/api/get")!
+            components.queryItems = [
+                URLQueryItem(name: "track_name", value: title),
+                URLQueryItem(name: "artist_name", value: artist),
+                URLQueryItem(name: "album_name", value: album),
+                URLQueryItem(name: "duration", value: String(Int(duration.rounded())))
+            ]
+            return components.url
+        } else if !title.isEmpty || !artist.isEmpty {
+            let query = "\(artist) \(title)".trimmingCharacters(in: .whitespaces)
+            var components = URLComponents(string: "https://lrclib.net/api/search")!
+            components.queryItems = [URLQueryItem(name: "q", value: query)]
+            return components.url
+        }
+        return nil
+    }
+
     func fetchLyrics(
         title: String,
         artist: String,
@@ -322,6 +355,22 @@ struct LRCLIBProvider: LyricsProvider {
 // MARK: - Lyrica Provider
 
 struct LyricaProvider: LyricsProvider {
+    func lyricsURL(
+        title: String,
+        artist: String,
+        album: String,
+        duration: TimeInterval
+    ) -> URL? {
+        guard !title.isEmpty || !artist.isEmpty else { return nil }
+        var components = URLComponents(string: "https://test-0k.onrender.com/lyrics/")!
+        components.queryItems = [
+            URLQueryItem(name: "song", value: title),
+            URLQueryItem(name: "artist", value: artist),
+            URLQueryItem(name: "timestamps", value: "true")
+        ]
+        return components.url
+    }
+
     func fetchLyrics(
         title: String,
         artist: String,
@@ -330,7 +379,7 @@ struct LyricaProvider: LyricsProvider {
     ) async throws -> String? {
         guard !title.isEmpty || !artist.isEmpty else { return nil }
 
-        var components = URLComponents(string: "https://wilooper-lyrica.hf.space/lyrics/")!
+        var components = URLComponents(string: "https://test-0k.onrender.com/lyrics/")!
         components.queryItems = [
             URLQueryItem(name: "song", value: title),
             URLQueryItem(name: "artist", value: artist),
