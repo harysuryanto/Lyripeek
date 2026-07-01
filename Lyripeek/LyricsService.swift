@@ -48,7 +48,11 @@ final class LyricsService: ObservableObject {
     /// True when there is an active track whose cache entry can be reset.
     var isResetAvailable: Bool { currentTrack != nil }
 
+    #if DEBUG
+    private static let cacheDirectoryName = "Lyripeek-Debug"
+    #else
     private static let cacheDirectoryName = "Lyripeek"
+    #endif
     private static let cacheFileName = "lyrics-cache.json"
 
     /// Loads lyrics for the given track. Results are cached on disk by

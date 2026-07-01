@@ -100,7 +100,11 @@ final class ArtworkService: ObservableObject {
 
     // MARK: - Disk cache
 
+    #if DEBUG
+    nonisolated private static let cacheDirectoryName = "Lyripeek-Debug"
+    #else
     nonisolated private static let cacheDirectoryName = "Lyripeek"
+    #endif
     nonisolated private static let artworkDirectoryName = "Artwork"
     nonisolated private static let maxDiskImages = 200
 
