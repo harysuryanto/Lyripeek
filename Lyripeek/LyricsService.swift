@@ -21,6 +21,7 @@ final class LyricsService: ObservableObject {
     @Published private(set) var hasNoLyrics: Bool = false
     @Published private(set) var fetchFailed: Bool = false
     @Published private(set) var lastFetchURL: URL? = nil
+    @Published private(set) var lyricsSource: String = ""
 
     // SWITCHABLE PROVIDER: Uncomment the provider you want to use.
     // private let provider: LyricsProvider = LRCLIBProvider()
@@ -81,6 +82,7 @@ final class LyricsService: ObservableObject {
         if let cachedLRC = cache[key] {
             lines = parseLRC(cachedLRC)
             rawLRC = cachedLRC
+            lyricsSource = extractSource(from: cachedLRC, fallback: "Cached")
             isLoading = false
             return
         }
@@ -88,25 +90,29 @@ final class LyricsService: ObservableObject {
         isLoading = true
         hasNoLyrics = false
         fetchFailed = false
+        lyricsSource = ""
         lines = []
         rawLRC = ""
 
         Task { [weak self] in
             guard let provider = self?.provider else { return }
             do {
-                if let realLRC = try await provider.fetchLyrics(
+                if let result = try await provider.fetchLyrics(
                     title: title,
                     artist: artist,
                     album: album,
                     duration: duration
                 ) {
+                    let (realLRC, source) = result
                     let parsed = parseLRC(realLRC)
                     await MainActor.run {
                         guard let self else { return }
-                        self.cache[key] = realLRC
+                        let cachedLRCWithSource = "[re:\(source)]\n" + realLRC
+                        self.cache[key] = cachedLRCWithSource
                         self.saveCacheToDisk()
                         self.lines = parsed
                         self.rawLRC = realLRC
+                        self.lyricsSource = source.capitalized
                         self.isLoading = false
                         self.hasNoLyrics = parsed.isEmpty
                         self.fetchFailed = false
@@ -117,6 +123,7 @@ final class LyricsService: ObservableObject {
                         self?.isLoading = false
                         self?.hasNoLyrics = true
                         self?.fetchFailed = false
+                        self?.lyricsSource = ""
                         self?.pendingKey = nil
                     }
                 }
@@ -125,6 +132,7 @@ final class LyricsService: ObservableObject {
                     self?.isLoading = false
                     self?.hasNoLyrics = false
                     self?.fetchFailed = true
+                    self?.lyricsSource = ""
                     self?.pendingKey = nil
                 }
             }
@@ -203,6 +211,19 @@ final class LyricsService: ObservableObject {
         let normalizedAlbum = album.trimmingCharacters(in: .whitespaces).lowercased()
         return "\(normalizedArtist) - \(normalizedTitle) - \(normalizedAlbum)"
     }
+
+    private func extractSource(from lrc: String, fallback: String) -> String {
+        for rawLine in lrc.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("[re:") && line.hasSuffix("]") {
+                let source = line.dropFirst(4).dropLast().trimmingCharacters(in: .whitespaces)
+                if !source.isEmpty {
+                    return source.capitalized
+                }
+            }
+        }
+        return fallback
+    }
 }
 
 // MARK: - Lyrics Provider Architecture
@@ -213,7 +234,7 @@ protocol LyricsProvider {
         artist: String,
         album: String,
         duration: TimeInterval
-    ) async throws -> String?
+    ) async throws -> (lrc: String, source: String)?
 
     func lyricsURL(
         title: String,
@@ -255,20 +276,19 @@ struct LRCLIBProvider: LyricsProvider {
         artist: String,
         album: String,
         duration: TimeInterval
-    ) async throws -> String? {
-        do {
-            if let exact = try await fetchExact(
-                title: title,
-                artist: artist,
-                album: album,
-                duration: duration
-            ) {
-                return exact
-            }
-        } catch {
-            // Fallback to search if exact match has an error
+    ) async throws -> (lrc: String, source: String)? {
+        if let exact = try await fetchExact(
+            title: title,
+            artist: artist,
+            album: album,
+            duration: duration
+        ) {
+            return (exact, "LRCLIB")
         }
-        return try await fetchSearch(title: title, artist: artist)
+        if let search = try await fetchSearch(title: title, artist: artist) {
+            return (search, "LRCLIB")
+        }
+        return nil
     }
 
     private func fetchExact(
@@ -377,7 +397,7 @@ struct LyricaProvider: LyricsProvider {
         artist: String,
         album: String,
         duration: TimeInterval
-    ) async throws -> String? {
+    ) async throws -> (lrc: String, source: String)? {
         guard !title.isEmpty || !artist.isEmpty else { return nil }
 
         var components = URLComponents(string: "https://test-0k.onrender.com/lyrics/")!
@@ -412,12 +432,14 @@ struct LyricaProvider: LyricsProvider {
               let lyrics = lyricaData.lyrics else {
             return nil
         }
-        return lyrics
+        let source = result.source?.capitalized ?? "Lyrica"
+        return (lyrics, source)
     }
 
     private struct LyricaResponse: Codable {
         let data: LyricaData?
         let status: String
+        let source: String?
     }
 
     private struct LyricaData: Codable {
@@ -457,7 +479,7 @@ struct LRCMuxProvider: LyricsProvider {
         artist: String,
         album: String,
         duration: TimeInterval
-    ) async throws -> String? {
+    ) async throws -> (lrc: String, source: String)? {
         guard let url = lyricsURL(title: title, artist: artist, album: album, duration: duration) else { return nil }
 
         var request = URLRequest(url: url)
@@ -480,6 +502,8 @@ struct LRCMuxProvider: LyricsProvider {
         guard let text = String(data: data, encoding: .utf8) else {
             return nil
         }
-        return text
+        let sourceHeader = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "X-Source")
+        let source = sourceHeader?.capitalized ?? "Lrcmux"
+        return (text, source)
     }
 }

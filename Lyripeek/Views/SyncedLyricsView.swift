@@ -74,6 +74,15 @@ struct SyncedLyricsView: View {
                             .id(line.id)
                     }
 
+                    if !lyricsService.lyricsSource.isEmpty {
+                        Text("Lyrics from \(lyricsService.lyricsSource)")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.tertiary)
+                            .padding(.top, 16)
+                            .padding(.bottom, 8)
+                            .frame(maxWidth: .infinity)
+                    }
+
                     Color.clear.frame(height: 40).id("bottom-spacer")
                 }
                 .padding(.horizontal, 24)
