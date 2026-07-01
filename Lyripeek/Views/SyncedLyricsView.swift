@@ -131,26 +131,30 @@ struct SyncedLyricsView: View {
         let futureOpacity: Double = index < currentIndex ? pastOpacity : (distance == 1 ? 0.7 : 0.45)
         let opacity: Double = isCurrent ? 1.0 : futureOpacity
 
-        if isCurrent && !line.words.isEmpty {
-            line.words.reduce(Text("")) { (result, word) -> Text in
-                let isWordActive = nowPlayingService.elapsedTime >= (word.startTime)
-                let wordColor = isWordActive ? Color.accentColor : Color.primary.opacity(0.45)
-                let wordText = Text(word.text).foregroundColor(wordColor)
-                return result + (result == Text("") ? Text("") : Text(" ")) + wordText
-            }
-            .font(.system(size: 17, weight: .semibold))
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 3)
-        } else {
-            Text(line.text.isEmpty ? "♪" : line.text)
-                .font(.system(size: 17, weight: .regular))
-                .foregroundStyle(lineStyle(isCurrent: isCurrent, opacity: opacity))
-                .multilineTextAlignment(.center)
+        Group {
+            if isCurrent && !line.words.isEmpty {
+                CenterFlowLayout(spacing: 4, lineSpacing: 4) {
+                    ForEach(line.words) { word in
+                        let isWordActive = nowPlayingService.elapsedTime >= word.startTime
+                        Text(word.text)
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(isWordActive ? Color.accentColor : Color.primary.opacity(0.45))
+                            .animation(.easeOut(duration: 0.2), value: isWordActive)
+                    }
+                }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 3)
-                .animation(.easeInOut(duration: 0.25), value: isCurrent)
+            } else {
+                Text(line.text.isEmpty ? "♪" : line.text)
+                    .font(.system(size: 18, weight: isCurrent ? .bold : .medium))
+                    .foregroundStyle(lineStyle(isCurrent: isCurrent, opacity: opacity))
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 3)
+            }
         }
+        .scaleEffect(isCurrent ? 1.06 : 0.94)
+        .animation(.spring(response: 0.4, dampingFraction: 0.75, blendDuration: 0), value: isCurrent)
     }
 
     /// Active line uses the system accent color at full opacity; all other
@@ -237,6 +241,80 @@ extension SyncedLyricsView {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.isProgrammaticScroll = false
             }
+        }
+    }
+}
+
+// MARK: - CenterFlowLayout
+
+struct CenterFlowLayout: Layout {
+    var spacing: CGFloat = 4
+    var lineSpacing: CGFloat = 4
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        var totalHeight: CGFloat = 0
+        var currentLineWidth: CGFloat = 0
+        var currentLineHeight: CGFloat = 0
+        
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if currentLineWidth + size.width > width && currentLineWidth > 0 {
+                totalHeight += currentLineHeight + lineSpacing
+                currentLineWidth = size.width
+                currentLineHeight = size.height
+            } else {
+                currentLineWidth += size.width + (currentLineWidth > 0 ? spacing : 0)
+                currentLineHeight = max(currentLineHeight, size.height)
+            }
+        }
+        totalHeight += currentLineHeight
+        return CGSize(width: width, height: totalHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let width = bounds.width
+        var lines: [[(LayoutSubview, CGSize)]] = [[]]
+        var lineWidths: [CGFloat] = [0]
+        var lineHeights: [CGFloat] = [0]
+        
+        var currentLineWidth: CGFloat = 0
+        var currentLineHeight: CGFloat = 0
+        var lineIndex = 0
+        
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if currentLineWidth + size.width > width && currentLineWidth > 0 {
+                lines.append([])
+                lineWidths.append(0)
+                lineHeights.append(0)
+                lineIndex += 1
+                currentLineWidth = 0
+                currentLineHeight = 0
+            }
+            lines[lineIndex].append((subview, size))
+            currentLineWidth += size.width + (lines[lineIndex].count > 1 ? spacing : 0)
+            currentLineHeight = max(currentLineHeight, size.height)
+            lineWidths[lineIndex] = currentLineWidth
+            lineHeights[lineIndex] = currentLineHeight
+        }
+        
+        var y = bounds.minY
+        for i in 0..<lines.count {
+            let line = lines[i]
+            let lineWidth = lineWidths[i]
+            let lineHeight = lineHeights[i]
+            
+            // Center alignment
+            var x = bounds.minX + (width - lineWidth) / 2
+            
+            for (subview, size) in line {
+                // Center vertically within the line height
+                let subviewY = y + (lineHeight - size.height) / 2
+                subview.place(at: CGPoint(x: x, y: subviewY), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += lineHeight + lineSpacing
         }
     }
 }
