@@ -31,6 +31,7 @@ final class LyricsService: ObservableObject {
     ]
 
     private static let offsetDefaultsKey = "lyricsOffset"
+    private static var offsetWriteWork = DispatchWorkItem(block: {})
 
     /// Playback time offset applied when looking up the active lyric line.
     /// Positive values delay lyrics; negative values make them appear earlier.
@@ -38,7 +39,12 @@ final class LyricsService: ObservableObject {
     /// Persisted to `UserDefaults` so the value survives across app launches.
     @Published var offset: TimeInterval {
         didSet {
-            UserDefaults.standard.set(offset, forKey: Self.offsetDefaultsKey)
+            Self.offsetWriteWork.cancel()
+            Self.offsetWriteWork = DispatchWorkItem { [weak self] in
+                guard let self = self else { return }
+                UserDefaults.standard.set(self.offset, forKey: Self.offsetDefaultsKey)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: Self.offsetWriteWork)
         }
     }
 

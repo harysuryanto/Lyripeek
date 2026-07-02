@@ -288,25 +288,6 @@ final class NowPlayingService: ObservableObject {
         let systemTrack = await systemSource.currentTrack()
         let systemArtwork = systemSource.systemArtwork
 
-        // If two known sources are both actively playing at the same time,
-        // the frontmost app wins. The order below is the deterministic
-        // tiebreaker for the rare case where the frontmost app isn't one of
-        // our known sources.
-        let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        let orderedSources: [PlayerSource] = {
-            guard let frontmostBundleID else { return enrichmentSources }
-            var matched: [PlayerSource] = []
-            var rest: [PlayerSource] = []
-            for source in enrichmentSources {
-                if source.bundleIdentifier == frontmostBundleID {
-                    matched.append(source)
-                } else {
-                    rest.append(source)
-                }
-            }
-            return matched + rest
-        }()
-
         // Layer 2: prefer a non-paused system track. This is the path used
         // for Safari, VLC, Podcasts, Audible, and any other app that publishes
         // to the system Now Playing service.
@@ -321,6 +302,25 @@ final class NowPlayingService: ObservableObject {
         // running — that spawn cost is the main energy waste this poll
         // would otherwise incur every tick.
         if resolvedTrack == nil {
+            // If two known sources are both actively playing at the same time,
+            // the frontmost app wins. The order below is the deterministic
+            // tiebreaker for the rare case where the frontmost app isn't one of
+            // our known sources.
+            let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            let orderedSources: [PlayerSource] = {
+                guard let frontmostBundleID else { return enrichmentSources }
+                var matched: [PlayerSource] = []
+                var rest: [PlayerSource] = []
+                for source in enrichmentSources {
+                    if source.bundleIdentifier == frontmostBundleID {
+                        matched.append(source)
+                    } else {
+                        rest.append(source)
+                    }
+                }
+                return matched + rest
+            }()
+
             let runningKnownIDs = MediaRemoteClient.shared.runningKnownPublisherBundleIDs()
             for source in orderedSources {
                 guard let id = source.bundleIdentifier, runningKnownIDs.contains(id) else {

@@ -13,21 +13,18 @@ struct SyncedLyricsView: View {
 
     @StateObject private var scrollCoordinator = ScrollCoordinator()
 
-    private var currentIndex: Int {
-        currentLineIndex(
+    var body: some View {
+        let currentIndex = currentLineIndex(
             lines: lyricsService.lines,
             currentTime: nowPlayingService.elapsedTime - lyricsService.offset
         )
-    }
-
-    var body: some View {
         Group {
             if lyricsService.isLoading {
                 loadingState
             } else if lyricsService.lines.isEmpty {
                 emptyState
             } else {
-                lyricsList
+                lyricsList(currentIndex: currentIndex)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: 220, alignment: .top)
@@ -61,7 +58,7 @@ struct SyncedLyricsView: View {
         .padding(.horizontal, 24)
     }
 
-    private var lyricsList: some View {
+    private func lyricsList(currentIndex: Int) -> some View {
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 4) {
@@ -70,7 +67,7 @@ struct SyncedLyricsView: View {
                     Color.clear.frame(height: 40).id("top-spacer")
 
                     ForEach(Array(lyricsService.lines.enumerated()), id: \.element.id) { index, line in
-                        lyricLineView(line: line, index: index)
+                        lyricLineView(line: line, index: index, currentIndex: currentIndex)
                             .id(line.id)
                     }
 
@@ -99,7 +96,7 @@ struct SyncedLyricsView: View {
             .onHover { scrollCoordinator.isHovered = $0 }
             .onAppear {
                 scrollCoordinator.isAutoScrollPaused = false
-                scrollToCurrent(using: proxy)
+                scrollToLine(currentIndex, using: proxy)
                 scrollCoordinator.startMonitoring()
             }
             .onDisappear {
@@ -109,7 +106,7 @@ struct SyncedLyricsView: View {
                 if scrollCoordinator.isAutoScrollPaused {
                     Button {
                         scrollCoordinator.isAutoScrollPaused = false
-                        scrollToCurrent(using: proxy)
+                        scrollToLine(currentIndex, using: proxy)
                     } label: {
                         syncButtonLabel
                     }
@@ -124,7 +121,7 @@ struct SyncedLyricsView: View {
     // MARK: - Line
 
     @ViewBuilder
-    private func lyricLineView(line: LyricLine, index: Int) -> some View {
+    private func lyricLineView(line: LyricLine, index: Int, currentIndex: Int) -> some View {
         let isCurrent = index == currentIndex
         let distance = abs(index - currentIndex)
         let pastOpacity: Double = 0.45
@@ -201,10 +198,6 @@ struct SyncedLyricsView: View {
                 proxy.scrollTo(lyricsService.lines[index].id, anchor: .center)
             }
         }
-    }
-
-    private func scrollToCurrent(using proxy: ScrollViewProxy) {
-        scrollToLine(currentIndex, using: proxy)
     }
 }
 
