@@ -9,6 +9,13 @@ import AppKit
 import Foundation
 import MediaPlayer
 
+struct SystemTrackResult {
+    let track: DesktopTrack?
+    let rawInfo: [String: Any]
+    let artwork: NSImage?
+    let lastOutput: String
+}
+
 /// Reads the system-wide `MPNowPlayingInfoCenter` — the same data the macOS
 /// Control Center Now Playing widget uses. This is the always-on primary
 /// source: any app that publishes to the system works here, even ones we
@@ -19,15 +26,17 @@ final class SystemNowPlayingPlayerSource: PlayerSource {
 
     private(set) var lastError: String = ""
     private(set) var lastOutput: String = ""
-    private(set) var rawNowPlayingInfo: [String: Any] = [:]
-    private(set) var systemArtwork: NSImage? = nil
 
     func currentTrack() async -> DesktopTrack? {
-        let info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        rawNowPlayingInfo = info
-        lastOutput = info.isEmpty ? "<empty>" : "\(info.count) keys"
+        let result = await currentTrackWithMetadata()
+        lastOutput = result.lastOutput
+        return result.track
+    }
 
-        systemArtwork = Self.makeImage(from: info[MPMediaItemPropertyArtwork])
+    func currentTrackWithMetadata() async -> SystemTrackResult {
+        let info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        let output = info.isEmpty ? "<empty>" : "\(info.count) keys"
+        let artwork = Self.makeImage(from: info[MPMediaItemPropertyArtwork])
 
         let title = normalizeMetadata(info[MPMediaItemPropertyTitle] as? String ?? "")
         let artist = normalizeMetadata(info[MPMediaItemPropertyArtist] as? String ?? "")
@@ -37,7 +46,12 @@ final class SystemNowPlayingPlayerSource: PlayerSource {
         let rate = info[MPNowPlayingInfoPropertyPlaybackRate] as? Double ?? 1
 
         guard !title.isEmpty || !artist.isEmpty else {
-            return nil
+            return SystemTrackResult(
+                track: nil,
+                rawInfo: info,
+                artwork: artwork,
+                lastOutput: output
+            )
         }
 
         // `MPNowPlayingInfoPropertyPlaybackRate` is 0 when paused, > 0 when
@@ -45,7 +59,7 @@ final class SystemNowPlayingPlayerSource: PlayerSource {
         // treat as "playing" so we don't falsely flag healthy data.
         let isPaused = rate == 0
 
-        return DesktopTrack(
+        let track = DesktopTrack(
             title: title,
             artist: artist,
             album: album,
@@ -55,6 +69,13 @@ final class SystemNowPlayingPlayerSource: PlayerSource {
             source: "Now Playing",
             bundleIdentifier: nil,
             isPaused: isPaused
+        )
+
+        return SystemTrackResult(
+            track: track,
+            rawInfo: info,
+            artwork: artwork,
+            lastOutput: output
         )
     }
 

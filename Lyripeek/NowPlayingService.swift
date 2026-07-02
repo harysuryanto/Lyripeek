@@ -284,8 +284,9 @@ final class NowPlayingService: ObservableObject {
     private func refresh() async {
         // Layer 1: system-wide MPNowPlayingInfoCenter. This is the source of
         // truth and works for any app that publishes to the system.
-        let systemTrack = await systemSource.currentTrack()
-        let systemArtwork = systemSource.systemArtwork
+        let systemResult = await systemSource.currentTrackWithMetadata()
+        let systemTrack = systemResult.track
+        let systemArtwork = systemResult.artwork
 
         // Layer 2: prefer a non-paused system track. This is the path used
         // for Safari, VLC, Podcasts, Audible, and any other app that publishes
@@ -338,7 +339,7 @@ final class NowPlayingService: ObservableObject {
             resolvedTrack = systemTrack
         }
 
-        rawNowPlayingInfo = systemSource.rawNowPlayingInfo
+        rawNowPlayingInfo = systemResult.rawInfo
         lastAppleScriptError = [
             spotifySource.lastError,
             appleMusicSource.lastError,
