@@ -102,121 +102,6 @@ private static var offsetWriteWork = DispatchWorkItem()
 
 ---
 
-### Item D: Stable gradient hash in `NowPlayingCard` (~8 lines)
-
-**File:** `Lyripeek/Views/NowPlayingCard.swift`
-
-**Problem:** Lines 141–142 in `ArtworkTile.gradient`:
-```swift
-let hash = abs(seed.hashValue)
-let pair = palette[hash % palette.count]
-```
-`String.hashValue` is randomized per process launch (Swift SE-0206). This means the same track gets a different gradient palette every time the app restarts. For a menu-bar app that relaunches frequently, this is visually inconsistent.
-
-**Fix:** Replace `String.hashValue` with a deterministic hash function. Add a helper (e.g., in a private extension or inline):
-
-```swift
-/// Deterministic hash (FNV-1a) so the same track always gets the same gradient.
-private func stableHash(_ s: String) -> Int {
-    var hash: UInt64 = 14695981039346656037 // FNV offset basis
-    for byte in s.utf8 {
-        hash ^= UInt64(byte)
-        hash *= 1099511628211 // FNV prime
-    }
-    return Int(bitPattern: hash)
-}
-```
-
-Then replace line 141:
-```swift
-let hash = abs(stableHash(seed))
-```
-
-**Note:** `ArtworkService.swift` already has a similar comment at line 126 about `String.hashValue` being randomized. You can reuse the same approach there if desired, though the artwork cache key uses a different slugify function already.
-
----
-
-### Item E: Add unit test target and tests (medium effort, highest long-term value)
-
-**Current state:** The Xcode project (`project.pbxproj`) has a single native target: `Lyripeek` app. No test target exists. No test files exist.
-
-**Steps:**
-
-1. **Create a test target** in the Xcode project. You can either:
-   - Add it via Xcode UI (File → New → Target → macOS Unit Testing Bundle), OR
-   - Manually add a `PBXNativeTarget` entry to `project.pbxproj` with a `XCTest` dependency. The test target should be named `LyripeekTests` and depend on the `Lyripeek` app target.
-
-2. **Create test file:** `LyripeekTests/SyncEngineTests.swift` — test the `currentLineIndex` function.
-
-   **Function under test:** `Lyripeek/SyncEngine.swift:18`
-   ```swift
-   func currentLineIndex(lines: [LyricLine], currentTime: TimeInterval) -> Int
-   ```
-
-   **Edge cases to test:**
-   - Empty lines array → returns 0
-   - Single line → returns 0
-   - `currentTime` before first line → returns 0
-   - `currentTime` exactly at a line timestamp → returns that line's index
-   - `currentTime` between two lines → returns the earlier line's index
-   - Seek backward (currentTime goes from line 3 back to line 1) → returns line 1
-   - Tied timestamps (two lines with same timestamp) → returns the later one (or earlier, depending on implementation — verify and document)
-   - Fractional timestamps (e.g., `[00:01.50]`) → handled correctly
-
-3. **Create test file:** `LyripeekTests/LRCParserTests.swift` — test `parseLRC`.
-
-   **Function under test:** `Lyripeek/LRCParser.swift:32`
-   ```swift
-   func parseLRC(_ lrc: String) -> [LyricLine]
-   ```
-
-   **Edge cases to test:**
-   - Empty string → returns empty array
-   - Single line with timestamp → returns one `LyricLine`
-   - Multiple lines in order → sorted correctly
-   - Fractional timestamps (`[01:23.45]`) → parsed correctly
-   - Malformed timestamps (e.g., `[XX:XX]`) → skipped or handled
-   - Lines without timestamps → skipped or treated as 0
-   - Metadata tags (`[ti:Song]`, `[ar:Artist]`) → skipped (not treated as lyrics)
-   - Windows-style line endings (`\r\n`) → handled
-   - Trailing newline → no extra empty line
-
-4. **Create test file:** `LyripeekTests/SpotifyPlayerSourceTests.swift` — test `parse`.
-
-   **Function under test:** `Lyripeek/PlayerSources/SpotifyPlayerSource.swift:73`
-   ```swift
-   static func parse(output: String, source: String, bundleIdentifier: String?) -> DesktopTrack?
-   ```
-
-   **Edge cases to test:**
-   - Valid JSON with all fields → returns `DesktopTrack`
-   - Empty string → returns nil
-   - Malformed JSON → returns nil
-   - Missing required fields (e.g., no `kSpPlayerName`) → returns nil
-   - Zero duration → returns `DesktopTrack` with `duration == 0`
-   - Special characters in title/artist → preserved correctly
-
-5. **Create test file:** `LyripeekTests/LyricsServiceTests.swift` — test `cacheKey` (requires making it `internal` instead of `private`, or test via reflection).
-
-   **Function under test:** `Lyripeek/LyricsService.swift:265`
-   ```swift
-   private func cacheKey(title: String, artist: String, album: String) -> String
-   ```
-
-   **Edge cases to test:**
-   - Consistency: same inputs → same key across calls
-   - Different titles → different keys
-   - Different artists → different keys
-   - Different albums → different keys
-   - Empty strings → valid key (no crash)
-   - Unicode characters → valid key
-
-   **Note:** Since `cacheKey` is `private`, you have two options:
-   - Change it to `internal` (remove `private`) — acceptable for testing
-   - Test indirectly through `loadLyrics` with mocked network — more complex, skip for now
-
----
-
 ### Item F: Mark `NowPlayingService` `@MainActor` (medium effort, Swift 6 readiness)
 
 **File:** `Lyripeek/NowPlayingService.swift`
@@ -288,11 +173,9 @@ func fetchArtwork() -> NSImage? { ... }
 
 1. **Item A** (hoist `currentIndex`) — trivial, no risk, immediate CPU savings
 2. **Item B** (move `orderedSources`) — trivial, no risk
-3. **Item D** (stable gradient hash) — trivial, cosmetic improvement
-4. **Item C** (debounce offset writes) — small, low risk
-5. **Item E** (unit tests) — highest long-term value, do this before larger refactors
-6. **Item F** (`@MainActor` annotation) — medium refactor, do after tests are in place
-7. **Item G** (split side effects) — small refactor, do last
+3. **Item C** (debounce offset writes) — small, low risk
+4. **Item F** (`@MainActor` annotation) — medium refactor
+5. **Item G** (split side effects) — small refactor, do last
 
 ## Commit style
 
@@ -304,8 +187,6 @@ Examples:
 - `perf: hoist currentIndex to avoid redundant binary searches in SyncedLyricsView`
 - `perf: move orderedSources computation inside Layer 3 block`
 - `perf: debounce offset UserDefaults writes to reduce disk I/O`
-- `fix: use deterministic hash for artwork gradient seed`
-- `test: add unit tests for LRCParser, SyncEngine, SpotifyPlayerSource, LyricsService`
 - `refactor: annotate NowPlayingService as @MainActor`
 - `refactor: extract side effects from SystemNowPlayingPlayerSource.currentTrack()`
 
@@ -316,8 +197,3 @@ After each change, run:
 xcodebuild -project Lyripeek.xcodeproj -scheme Lyripeek -destination 'platform=macOS' build
 ```
 The build must succeed with zero new warnings.
-
-For tests (Item E), run:
-```bash
-xcodebuild -project Lyripeek.xcodeproj -scheme Lyripeek -destination 'platform=macOS' test
-```

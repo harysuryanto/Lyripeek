@@ -44,6 +44,7 @@ import MediaPlayer
 ///   so no `osascript` subprocess is spawned when no supported music app is
 ///   open. A `NSWorkspace` launch observer wakes the poll immediately when a
 ///   known music app starts.
+@MainActor
 final class NowPlayingService: ObservableObject {
     @Published private(set) var title: String = ""
     @Published private(set) var artist: String = ""
@@ -223,7 +224,7 @@ final class NowPlayingService: ObservableObject {
         while !Task.isCancelled {
             await refresh()
             if Task.isCancelled { break }
-            let interval = await currentPollInterval()
+            let interval = currentPollInterval()
             try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
         }
     }
@@ -231,11 +232,9 @@ final class NowPlayingService: ObservableObject {
     /// Returns the current poll interval based on how recently a track was
     /// playing. Runs on the main actor because `lastActiveAt` is written
     /// there (from `applyTrack`).
-    private func currentPollInterval() async -> TimeInterval {
-        await MainActor.run {
-            let idle = Date().timeIntervalSince(lastActiveAt) >= Self.activeCooldownSeconds
-            return idle ? Self.idleIntervalSeconds : Self.activeIntervalSeconds
-        }
+    private func currentPollInterval() -> TimeInterval {
+        let idle = Date().timeIntervalSince(lastActiveAt) >= Self.activeCooldownSeconds
+        return idle ? Self.idleIntervalSeconds : Self.activeIntervalSeconds
     }
 
     /// Cancels any in-flight poll sleep and restarts the loop with an
@@ -266,7 +265,7 @@ final class NowPlayingService: ObservableObject {
         let target = resolvedCommandSource()
         Task { [weak self] in
             _ = await target.sendCommand(command)
-            await MainActor.run { self?.restartPollingForLaunch() }
+            self?.restartPollingForLaunch()
         }
     }
 
@@ -339,46 +338,44 @@ final class NowPlayingService: ObservableObject {
             resolvedTrack = systemTrack
         }
 
-        await MainActor.run {
-            rawNowPlayingInfo = systemSource.rawNowPlayingInfo
-            lastAppleScriptError = [
-                spotifySource.lastError,
-                appleMusicSource.lastError,
-                kasetSource.lastError,
-            ]
-            .first(where: { !$0.isEmpty }) ?? ""
+        rawNowPlayingInfo = systemSource.rawNowPlayingInfo
+        lastAppleScriptError = [
+            spotifySource.lastError,
+            appleMusicSource.lastError,
+            kasetSource.lastError,
+        ]
+        .first(where: { !$0.isEmpty }) ?? ""
 
-            lastSpotifyOutput = spotifySource.lastOutput
-            lastAppleMusicOutput = appleMusicSource.lastOutput
-            lastKasetOutput = kasetSource.lastOutput
+        lastSpotifyOutput = spotifySource.lastOutput
+        lastAppleMusicOutput = appleMusicSource.lastOutput
+        lastKasetOutput = kasetSource.lastOutput
 
-            guard let track = resolvedTrack else {
-                clearTrack()
-                return
-            }
-
-            let resolvedSource: String
-            if track.source != "Now Playing" {
-                resolvedSource = track.source
-            } else {
-                resolvedSource = MediaRemoteClient.shared.currentPublisherDisplayName()
-            }
-
-            applyTrack(
-                DesktopTrack(
-                    title: track.title,
-                    artist: track.artist,
-                    album: track.album,
-                    duration: track.duration,
-                    elapsedTime: track.elapsedTime,
-                    playbackRate: track.playbackRate,
-                    source: resolvedSource,
-                    bundleIdentifier: track.bundleIdentifier,
-                    isPaused: track.isPaused
-                ),
-                artwork: systemArtwork
-            )
+        guard let track = resolvedTrack else {
+            clearTrack()
+            return
         }
+
+        let resolvedSource: String
+        if track.source != "Now Playing" {
+            resolvedSource = track.source
+        } else {
+            resolvedSource = MediaRemoteClient.shared.currentPublisherDisplayName()
+        }
+
+        applyTrack(
+            DesktopTrack(
+                title: track.title,
+                artist: track.artist,
+                album: track.album,
+                duration: track.duration,
+                elapsedTime: track.elapsedTime,
+                playbackRate: track.playbackRate,
+                source: resolvedSource,
+                bundleIdentifier: track.bundleIdentifier,
+                isPaused: track.isPaused
+            ),
+            artwork: systemArtwork
+        )
     }
 
     // MARK: - Track state
