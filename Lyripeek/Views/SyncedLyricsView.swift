@@ -77,8 +77,8 @@ struct SyncedLyricsView: View {
                         }
                     }
 
-                    if !lyricsService.lyricsSource.isEmpty {
-                        Text("Lyrics from \(lyricsService.lyricsSource)\(lyricsService.isSynced ? "" : " (Unsynced)")")
+                    if !lyricsService.attributionText.isEmpty {
+                        Text(lyricsService.attributionText)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.tertiary)
                             .padding(.top, 16)

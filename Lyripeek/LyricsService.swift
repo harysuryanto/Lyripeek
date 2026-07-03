@@ -22,7 +22,26 @@ final class LyricsService: ObservableObject {
     @Published private(set) var fetchFailed: Bool = false
     @Published private(set) var lastFetchURL: URL? = nil
     @Published private(set) var lyricsSource: String = ""
+    @Published private(set) var lyricsProvider: String = ""
     @Published private(set) var isSynced: Bool = true
+
+    var attributionText: String {
+        let provider = lyricsProvider.trimmingCharacters(in: .whitespaces)
+        let source = lyricsSource.trimmingCharacters(in: .whitespaces)
+        
+        let hasProvider = !provider.isEmpty && provider != "Cached"
+        let hasSource = !source.isEmpty
+        
+        if hasProvider && hasSource && source.lowercased() != provider.lowercased() {
+            return "Lyrics from \(source) via \(provider)"
+        } else if hasProvider {
+            return "Lyrics from \(provider)"
+        } else if hasSource {
+            return "Lyrics from \(source)"
+        } else {
+            return ""
+        }
+    }
 
 
     // POOLED PROVIDERS: Tried sequentially from first to last.
@@ -100,7 +119,8 @@ final class LyricsService: ObservableObject {
                 self.lines = plainParsed
             }
             rawLRC = cachedLRC
-            lyricsSource = extractSource(from: cachedLRC, fallback: "Cached")
+            lyricsSource = extractSource(from: cachedLRC) ?? ""
+            lyricsProvider = extractProvider(from: cachedLRC) ?? "Cached"
             isLoading = false
             return
         }
@@ -109,6 +129,7 @@ final class LyricsService: ObservableObject {
         hasNoLyrics = false
         fetchFailed = false
         lyricsSource = ""
+        lyricsProvider = ""
         lines = []
         rawLRC = ""
         isSynced = true
@@ -118,7 +139,7 @@ final class LyricsService: ObservableObject {
 
             var fetchSuccess = false
             var lastError: Error? = nil
-            var firstUnsyncedResult: (lrc: String, source: String)? = nil
+            var firstUnsyncedResult: (lrc: String, source: String?, provider: String)? = nil
 
             for provider in self.providers {
                 // Ensure we are still fetching the same track before trying the next provider
@@ -150,12 +171,18 @@ final class LyricsService: ObservableObject {
                                       self.currentTrack?.album == album else {
                                     return
                                 }
-                                let cachedLRCWithSource = "[re:\(source)]\n" + realLRC
+                                var metadata = ""
+                                if let source = source, !source.isEmpty {
+                                    metadata += "[re:\(source)]\n"
+                                }
+                                metadata += "[ve:\(provider.name)]\n"
+                                let cachedLRCWithSource = metadata + realLRC
                                 self.cache[key] = cachedLRCWithSource
                                 self.saveCacheToDisk()
                                 self.lines = parsed
                                 self.rawLRC = realLRC
-                                self.lyricsSource = source.capitalized
+                                self.lyricsSource = source?.capitalized ?? ""
+                                self.lyricsProvider = provider.name
                                 self.isSynced = true
                                 self.isLoading = false
                                 self.hasNoLyrics = false
@@ -168,7 +195,7 @@ final class LyricsService: ObservableObject {
                             // Unsynced lyrics candidate
                             let plainParsed = parsePlainLyrics(realLRC)
                             if !plainParsed.isEmpty && firstUnsyncedResult == nil {
-                                firstUnsyncedResult = (realLRC, source)
+                                firstUnsyncedResult = (realLRC, source, provider.name)
                             }
                         }
                     }
@@ -179,7 +206,7 @@ final class LyricsService: ObservableObject {
 
             if !fetchSuccess {
                 if let unsynced = firstUnsyncedResult {
-                    let (realLRC, source) = unsynced
+                    let (realLRC, source, providerName) = unsynced
                     let parsed = parsePlainLyrics(realLRC)
                     await MainActor.run {
                         guard self.currentTrack?.title == title,
@@ -187,12 +214,18 @@ final class LyricsService: ObservableObject {
                               self.currentTrack?.album == album else {
                             return
                         }
-                        let cachedLRCWithSource = "[re:\(source)]\n" + realLRC
+                        var metadata = ""
+                        if let source = source, !source.isEmpty {
+                            metadata += "[re:\(source)]\n"
+                        }
+                        metadata += "[ve:\(providerName)]\n"
+                        let cachedLRCWithSource = metadata + realLRC
                         self.cache[key] = cachedLRCWithSource
                         self.saveCacheToDisk()
                         self.lines = parsed
                         self.rawLRC = realLRC
-                        self.lyricsSource = source.capitalized
+                        self.lyricsSource = source?.capitalized ?? ""
+                        self.lyricsProvider = providerName
                         self.isSynced = false
                         self.isLoading = false
                         self.hasNoLyrics = false
@@ -213,6 +246,7 @@ final class LyricsService: ObservableObject {
                     self.isLoading = false
                     self.pendingKey = nil
                     self.lyricsSource = ""
+                    self.lyricsProvider = ""
                     
                     if let _ = lastError {
                         self.fetchFailed = true
@@ -304,7 +338,7 @@ final class LyricsService: ObservableObject {
         return "\(normalizedArtist) - \(normalizedTitle) - \(normalizedAlbum)"
     }
 
-    private func extractSource(from lrc: String, fallback: String) -> String {
+    private func extractSource(from lrc: String) -> String? {
         for rawLine in lrc.components(separatedBy: .newlines) {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             if line.hasPrefix("[re:") && line.hasSuffix("]") {
@@ -314,19 +348,34 @@ final class LyricsService: ObservableObject {
                 }
             }
         }
-        return fallback
+        return nil
+    }
+
+    private func extractProvider(from lrc: String) -> String? {
+        for rawLine in lrc.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("[ve:") && line.hasSuffix("]") {
+                let provider = line.dropFirst(4).dropLast().trimmingCharacters(in: .whitespaces)
+                if !provider.isEmpty {
+                    return provider.capitalized
+                }
+            }
+        }
+        return nil
     }
 }
 
 // MARK: - Lyrics Provider Architecture
 
 protocol LyricsProvider {
+    var name: String { get }
+
     func fetchLyrics(
         title: String,
         artist: String,
         album: String,
         duration: TimeInterval
-    ) async throws -> (lrc: String, source: String)?
+    ) async throws -> (lrc: String, source: String?)?
 
     func lyricsURL(
         title: String,
@@ -339,6 +388,8 @@ protocol LyricsProvider {
 // MARK: - LRCLIB Provider
 
 struct LRCLIBProvider: LyricsProvider {
+    var name: String { "LRCLIB" }
+
     func lyricsURL(
         title: String,
         artist: String,
@@ -368,17 +419,17 @@ struct LRCLIBProvider: LyricsProvider {
         artist: String,
         album: String,
         duration: TimeInterval
-    ) async throws -> (lrc: String, source: String)? {
+    ) async throws -> (lrc: String, source: String?)? {
         if let exact = try await fetchExact(
             title: title,
             artist: artist,
             album: album,
             duration: duration
         ) {
-            return (exact, "LRCLIB")
+            return (exact, nil)
         }
         if let search = try await fetchSearch(title: title, artist: artist) {
-            return (search, "LRCLIB")
+            return (search, nil)
         }
         return nil
     }
@@ -487,6 +538,8 @@ struct LRCLIBProvider: LyricsProvider {
 // MARK: - Lyrica Provider
 
 struct LyricaProvider: LyricsProvider {
+    var name: String { "Lyrica" }
+
     func lyricsURL(
         title: String,
         artist: String,
@@ -508,7 +561,7 @@ struct LyricaProvider: LyricsProvider {
         artist: String,
         album: String,
         duration: TimeInterval
-    ) async throws -> (lrc: String, source: String)? {
+    ) async throws -> (lrc: String, source: String?)? {
         guard !title.isEmpty || !artist.isEmpty else { return nil }
 
         var components = URLComponents(string: "https://test-0k.onrender.com/lyrics/")!
@@ -542,7 +595,7 @@ struct LyricaProvider: LyricsProvider {
               let lyrics = lyricaData.lyrics else {
             return nil
         }
-        let source = result.source?.capitalized ?? "Lyrica"
+        let source = result.source?.capitalized
         return (lyrics, source)
     }
 
@@ -561,6 +614,8 @@ struct LyricaProvider: LyricsProvider {
 // MARK: - LRCMux Provider
 
 struct LRCMuxProvider: LyricsProvider {
+    var name: String { "Lrcmux" }
+
     func lyricsURL(
         title: String,
         artist: String,
@@ -589,7 +644,7 @@ struct LRCMuxProvider: LyricsProvider {
         artist: String,
         album: String,
         duration: TimeInterval
-    ) async throws -> (lrc: String, source: String)? {
+    ) async throws -> (lrc: String, source: String?)? {
         guard let url = lyricsURL(title: title, artist: artist, album: album, duration: duration) else { return nil }
 
         var request = URLRequest(url: url)
@@ -613,7 +668,7 @@ struct LRCMuxProvider: LyricsProvider {
             return nil
         }
         let sourceHeader = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "X-Source")
-        let source = sourceHeader?.capitalized ?? "Lrcmux"
+        let source = sourceHeader?.capitalized
         return (text, source)
     }
 }
