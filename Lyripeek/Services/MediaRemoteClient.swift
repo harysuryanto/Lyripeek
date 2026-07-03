@@ -43,6 +43,7 @@ final class MediaRemoteClient {
     private let pidSymbolAddress: UnsafeMutableRawObject?
     private let displaySymbolAddress: UnsafeMutableRawObject?
     private let sendCommandSymbolAddress: UnsafeMutableRawObject?
+    private let setElapsedTimeSymbolAddress: UnsafeMutableRawObject?
 
     /// Bundle ids of the apps Lyripeek knows how to enrich via AppleScript
     /// (Spotify, Apple Music, Kaset). Used for two purposes:
@@ -84,12 +85,14 @@ final class MediaRemoteClient {
             self.pidSymbolAddress = nil
             self.displaySymbolAddress = nil
             self.sendCommandSymbolAddress = nil
+            self.setElapsedTimeSymbolAddress = nil
             return
         }
 
         let pidSymbol = dlsym(raw, "MRMediaRemoteGetNowPlayingApplicationPID")
         let displaySymbol = dlsym(raw, "MRMediaRemoteGetNowPlayingApplicationDisplayID")
         let sendCommandSymbol = dlsym(raw, "MRMediaRemoteSendCommand")
+        let setElapsedTimeSymbol = dlsym(raw, "MRMediaRemoteSetElapsedTime")
 
         if pidSymbol == nil {
             NSLog("MediaRemoteClient: MRMediaRemoteGetNowPlayingApplicationPID not found")
@@ -99,6 +102,9 @@ final class MediaRemoteClient {
         }
         if sendCommandSymbol == nil {
             NSLog("MediaRemoteClient: MRMediaRemoteSendCommand not found")
+        }
+        if setElapsedTimeSymbol == nil {
+            NSLog("MediaRemoteClient: MRMediaRemoteSetElapsedTime not found")
         }
 
         // Keep the addresses for the debug UI; do NOT call them.
@@ -110,6 +116,7 @@ final class MediaRemoteClient {
         // point used by media-key remappers without crashes, so it IS safe to
         // call from `sendCommand(_:)` below.
         self.sendCommandSymbolAddress = sendCommandSymbol
+        self.setElapsedTimeSymbolAddress = setElapsedTimeSymbol
         self.isMediaRemoteAvailable = pidSymbol != nil
     }
 
@@ -161,6 +168,16 @@ final class MediaRemoteClient {
         }
         let fn = unsafeBitCast(address, to: MRMediaRemoteSendCommandFunc.self)
         fn(rawCommand, nil)
+        return true
+    }
+
+    /// Seeks the active Now Playing app to the specified time (in seconds) via
+    /// the private `MRMediaRemoteSetElapsedTime`. Returns `true` when the symbol was
+    /// loaded and the call was dispatched, `false` otherwise.
+    func seek(to time: TimeInterval) -> Bool {
+        guard let address = setElapsedTimeSymbolAddress else { return false }
+        let fn = unsafeBitCast(address, to: (@convention(c) (Double) -> Void).self)
+        fn(time)
         return true
     }
 

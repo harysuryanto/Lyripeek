@@ -151,24 +151,39 @@ private struct ArtworkTile: View {
 // MARK: - Progress Bar
 
 private struct ProgressBar: View {
+    @EnvironmentObject private var nowPlayingService: NowPlayingService
     let elapsed: TimeInterval
     let duration: TimeInterval
 
+    @State private var localElapsed: TimeInterval = 0
+    @State private var isEditing = false
+
     var body: some View {
+        let currentElapsed = isEditing ? localElapsed : elapsed
+
         VStack(spacing: 4) {
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                        .fill(.secondary.opacity(0.25))
-                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                        .fill(Color.accentColor)
-                        .frame(width: proxy.size.width * progressFraction)
+            Slider(
+                value: Binding<Double>(
+                    get: { currentElapsed },
+                    set: { newValue in
+                        localElapsed = newValue
+                    }
+                ),
+                in: 0...max(0.1, duration),
+                onEditingChanged: { editing in
+                    isEditing = editing
+                    if !editing {
+                        nowPlayingService.seek(to: localElapsed)
+                    } else {
+                        localElapsed = elapsed
+                    }
                 }
-            }
-            .frame(height: 3)
+            )
+            .tint(Color.accentColor)
+            .disabled(duration <= 0)
 
             HStack {
-                Text(format(elapsed))
+                Text(format(currentElapsed))
                 Spacer()
                 Text(format(duration))
             }
@@ -176,12 +191,7 @@ private struct ProgressBar: View {
             .foregroundStyle(.secondary)
             .monospacedDigit()
         }
-    }
-
-    private var progressFraction: CGFloat {
-        guard duration > 0 else { return 0 }
-        let fraction = elapsed / duration
-        return CGFloat(max(0, min(1, fraction)))
+        .opacity(duration > 0 ? 1.0 : 0.6)
     }
 
     private func format(_ time: TimeInterval) -> String {

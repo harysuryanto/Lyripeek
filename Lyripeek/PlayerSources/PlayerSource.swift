@@ -97,12 +97,21 @@ protocol PlayerSource: AnyObject {
     /// when the source can't handle it (e.g. the app isn't running or doesn't
     /// expose the verb). Must never throw; transient errors are swallowed.
     func sendCommand(_ command: PlaybackCommand) async -> Bool
+
+    /// Issues a seek command to the player to jump to the specified time.
+    /// Returns `true` when the command was accepted, `false` when the source
+    /// can't handle it (the app isn't running or doesn't support seeking).
+    func seek(to position: TimeInterval) async -> Bool
 }
 
 extension PlayerSource {
     /// Default no-op so sources without a transport surface simply decline
     /// and the orchestrator can fall back to the system `MediaRemote` path.
     func sendCommand(_ command: PlaybackCommand) async -> Bool { false }
+
+    /// Default no-op so sources without seek support simply decline and the
+    /// orchestrator can fall back to the system `MediaRemote` path.
+    func seek(to position: TimeInterval) async -> Bool { false }
 }
 
 /// Strips common noise from a metadata string (e.g. "Song (Official Video)").

@@ -12,6 +12,7 @@ struct SyncedLyricsView: View {
     @EnvironmentObject private var lyricsService: LyricsService
 
     @StateObject private var scrollCoordinator = ScrollCoordinator()
+    @State private var hoveredLineId: UUID? = nil
 
     var body: some View {
         let currentIndex = currentLineIndex(
@@ -130,10 +131,12 @@ struct SyncedLyricsView: View {
     @ViewBuilder
     private func lyricLineView(line: LyricLine, index: Int, currentIndex: Int) -> some View {
         let isCurrent = index == currentIndex
+        let isHovered = hoveredLineId == line.id
         let distance = abs(index - currentIndex)
         let pastOpacity: Double = 0.45
         let futureOpacity: Double = index < currentIndex ? pastOpacity : (distance == 1 ? 0.7 : 0.45)
-        let opacity: Double = isCurrent ? 1.0 : futureOpacity
+        let baseOpacity: Double = isCurrent ? 1.0 : futureOpacity
+        let opacity: Double = isHovered ? min(1.0, baseOpacity + 0.25) : baseOpacity
 
         Group {
             if isCurrent && !line.words.isEmpty {
@@ -157,8 +160,22 @@ struct SyncedLyricsView: View {
                     .padding(.vertical, 3)
             }
         }
-        .scaleEffect(isCurrent ? 1.06 : 0.94)
+        .scaleEffect(isCurrent ? 1.06 : (isHovered ? 0.98 : 0.94))
         .animation(.spring(response: 0.4, dampingFraction: 0.75, blendDuration: 0), value: isCurrent)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7, blendDuration: 0), value: isHovered)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            nowPlayingService.seek(to: line.time + lyricsService.offset)
+        }
+        .onHover { isHovering in
+            if isHovering {
+                hoveredLineId = line.id
+            } else {
+                if hoveredLineId == line.id {
+                    hoveredLineId = nil
+                }
+            }
+        }
     }
 
     @ViewBuilder

@@ -125,6 +125,10 @@ final class NowPlayingService: ObservableObject {
     /// NOT accumulate across polls (see `applyTrack` for the proof).
     private var driftOffset: TimeInterval = 0
 
+    // MARK: - Seek protection state
+    private var lastSeekAt: Date? = nil
+    private var lastSeekTarget: TimeInterval = 0
+
     // MARK: - Poll cadence state
 
     /// Keep polling at `activeIntervalSeconds` while a non-paused track has
@@ -269,6 +273,32 @@ final class NowPlayingService: ObservableObject {
         }
     }
 
+    /// Seeks the active player to the specified position (in seconds).
+    /// If the matched player source cannot handle seeking, we fall back to
+    /// the system Now Playing source.
+    func seek(to position: TimeInterval) {
+        // Snap interpolation state synchronously for instant visual feedback.
+        // This must happen before the async Task so the 10 Hz tick immediately
+        // interpolates from the new position, avoiding a ~0.5 s rubber-band
+        // back to the old position while AppleScript completes.
+        elapsedTime = position
+        lastReportedElapsed = position
+        driftOffset = 0
+        lastReportedAt = Date()
+
+        lastSeekAt = Date()
+        lastSeekTarget = position
+
+        let target = resolvedCommandSource()
+        Task { [weak self] in
+            let success = await target.seek(to: position)
+            if !success {
+                _ = await self?.systemSource.seek(to: position)
+            }
+            self?.restartPollingForLaunch()
+        }
+    }
+
     /// Picks the `PlayerSource` that should receive a transport command based
     /// on the active track's `sourceBundleIdentifier`. Falls back to the
     /// system source (MediaRemote) when the publisher isn't one of our
@@ -382,52 +412,79 @@ final class NowPlayingService: ObservableObject {
     // MARK: - Track state
 
     private func applyTrack(_ track: DesktopTrack, artwork: NSImage?) {
-        let newTitle = track.title
-        let newArtist = track.artist
-        let newAlbum = track.album
+        var resolvedTrack = track
+
+        if let seekAt = lastSeekAt {
+            let elapsedSinceSeek = Date().timeIntervalSince(seekAt)
+            if elapsedSinceSeek < 2.0 {
+                let diffToTarget = abs(track.elapsedTime - lastSeekTarget)
+                if diffToTarget > 1.5 {
+                    // Player is still reporting the old position. Keep our local position.
+                    resolvedTrack = DesktopTrack(
+                        title: track.title,
+                        artist: track.artist,
+                        album: track.album,
+                        duration: track.duration,
+                        elapsedTime: self.elapsedTime,
+                        playbackRate: track.playbackRate,
+                        source: track.source,
+                        bundleIdentifier: track.bundleIdentifier,
+                        isPaused: track.isPaused
+                    )
+                } else {
+                    lastSeekAt = nil
+                }
+            } else {
+                lastSeekAt = nil
+            }
+        }
+
+        let newTitle = resolvedTrack.title
+        let newArtist = resolvedTrack.artist
+        let newAlbum = resolvedTrack.album
 
         let trackDidChange = newTitle != title || newArtist != artist || newAlbum != album
 
         title = newTitle
         artist = newArtist
         album = newAlbum
-        duration = track.duration
-        lastParsedDuration = track.duration
-        lastParsedElapsedTime = track.elapsedTime
-        sourceDescription = track.source
-        sourceBundleIdentifier = track.bundleIdentifier
+        duration = resolvedTrack.duration
+        lastParsedDuration = resolvedTrack.duration
+        lastParsedElapsedTime = resolvedTrack.elapsedTime
+        sourceDescription = resolvedTrack.source
+        sourceBundleIdentifier = resolvedTrack.bundleIdentifier
         self.artwork = artwork
 
         let wasPlaying = isPlaying
-        isPlaying = !track.isPaused
+        isPlaying = !resolvedTrack.isPaused
 
         // --- Poll-cadence state ---
         // Mark "active" only for a playing track so `currentPollInterval()`
         // keeps polling at 1 Hz. Paused tracks don't extend the active
         // window; once `activeCooldownSeconds` elapses without a playing
         // track the loop drops to the idle interval.
-        if !track.isPaused {
+        if !resolvedTrack.isPaused {
             lastActiveAt = Date()
         }
 
         let now = Date()
 
-        if track.isPaused {
+        if resolvedTrack.isPaused {
             // Paused: Reset drift and snap immediately to the exact player position.
             // When paused, we do not need interpolation or drift adjustment since the time is static.
             driftOffset = 0
-            lastReportedElapsed = track.elapsedTime
+            lastReportedElapsed = resolvedTrack.elapsedTime
             lastReportedAt = now
             lastReportedRate = 0
-            elapsedTime = track.elapsedTime
+            elapsedTime = resolvedTrack.elapsedTime
         } else if trackDidChange || !wasPlaying {
             // Track changed or resumed from pause: Snap immediately to the exact player position.
             // This ensures a clean baseline starting point for the new track/state.
             driftOffset = 0
-            lastReportedElapsed = track.elapsedTime
+            lastReportedElapsed = resolvedTrack.elapsedTime
             lastReportedAt = now
-            lastReportedRate = track.playbackRate
-            elapsedTime = track.elapsedTime
+            lastReportedRate = resolvedTrack.playbackRate
+            elapsedTime = resolvedTrack.elapsedTime
         } else {
             // Normal playback: Calculate where the local wall clock expects playback to be,
             // using the previous baseline (lastReportedElapsed + lastReportedAt) and rate.
@@ -435,23 +492,23 @@ final class NowPlayingService: ObservableObject {
             // via the previous poll's update. Adding it again would cause compounding accumulation.
             let expected: TimeInterval
             if lastReportedAt == .distantPast {
-                expected = track.elapsedTime
+                expected = resolvedTrack.elapsedTime
             } else {
                 let delta = max(0, now.timeIntervalSince(lastReportedAt))
                 expected = lastReportedElapsed + delta * lastReportedRate
             }
 
             // Difference between the raw source time and our pure wall-clock expectation.
-            let diff = track.elapsedTime - expected
+            let diff = resolvedTrack.elapsedTime - expected
 
             if abs(diff) > 0.5 {
                 // Seek detected: The player time has jumped significantly (more than 0.5 seconds)
                 // from what the wall clock expects. Snap instantly to this new position.
                 driftOffset = 0
-                lastReportedElapsed = track.elapsedTime
+                lastReportedElapsed = resolvedTrack.elapsedTime
                 lastReportedAt = now
-                lastReportedRate = track.playbackRate
-                elapsedTime = track.elapsedTime
+                lastReportedRate = resolvedTrack.playbackRate
+                elapsedTime = resolvedTrack.elapsedTime
             } else {
                 // Polling/AppleScript jitter: The minor difference is due to OS execution
                 // overhead or discrete player updates.
@@ -463,16 +520,16 @@ final class NowPlayingService: ObservableObject {
                 //   displayed = newLastReportedElapsed + delta * rate + driftOffset
                 //             = track.elapsedTime + delta * rate + (expected - track.elapsedTime)
                 //             = expected + delta * rate   ← continuous, no jump
-                driftOffset = expected - track.elapsedTime
-                lastReportedElapsed = track.elapsedTime
+                driftOffset = expected - resolvedTrack.elapsedTime
+                lastReportedElapsed = resolvedTrack.elapsedTime
                 lastReportedAt = now
-                lastReportedRate = track.playbackRate
+                lastReportedRate = resolvedTrack.playbackRate
                 elapsedTime = expected
             }
         }
 
         if trackDidChange && (!newTitle.isEmpty || !newArtist.isEmpty) {
-            trackChangedSubject.send((title: newTitle, artist: newArtist, album: newAlbum, duration: track.duration))
+            trackChangedSubject.send((title: newTitle, artist: newArtist, album: newAlbum, duration: resolvedTrack.duration))
         }
     }
 

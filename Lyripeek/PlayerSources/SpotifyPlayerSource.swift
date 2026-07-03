@@ -70,6 +70,22 @@ final class SpotifyPlayerSource: PlayerSource {
         return output != nil && !(output?.isEmpty ?? true)
     }
 
+    func seek(to position: TimeInterval) async -> Bool {
+        let script = """
+        tell application "Spotify"
+            if it is running then
+                set player position to \(position)
+                return "ok"
+            end if
+        end tell
+        return ""
+        """
+        let output = await runAppleScript(script) { [weak self] err in
+            self?.lastError = err
+        }
+        return output != nil && !(output?.isEmpty ?? true)
+    }
+
     static func parse(output: String, source: String, bundleIdentifier: String?) -> DesktopTrack? {
         var trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }

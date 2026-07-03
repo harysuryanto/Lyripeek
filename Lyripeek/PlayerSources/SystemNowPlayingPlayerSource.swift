@@ -88,6 +88,10 @@ final class SystemNowPlayingPlayerSource: PlayerSource {
         MediaRemoteClient.shared.sendCommand(command)
     }
 
+    func seek(to position: TimeInterval) async -> Bool {
+        MediaRemoteClient.shared.seek(to: position)
+    }
+
     nonisolated private static let artworkRenderSize = CGSize(width: 600, height: 600)
 
     nonisolated private static func makeImage(from raw: Any?) -> NSImage? {
