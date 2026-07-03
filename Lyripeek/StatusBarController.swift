@@ -158,7 +158,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         } else if fetchFailed {
             statusView.setAttributedText(NSAttributedString(string: "Failed to fetch lyrics"))
         } else if hasNoLyrics {
-            statusView.setAttributedText(NSAttributedString(string: "Can't find synced lyrics"))
+            statusView.setAttributedText(NSAttributedString(string: "Lyrics not found"))
         } else if !isSynced {
             statusView.setAttributedText(NSAttributedString(string: "Click to see lyrics"))
         } else if lines.isEmpty {
