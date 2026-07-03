@@ -352,14 +352,22 @@ final class NowPlayingService: ObservableObject {
             }()
 
             let runningKnownIDs = MediaRemoteClient.shared.runningKnownPublisherBundleIDs()
+            var pausedCandidate: DesktopTrack? = nil
             for source in orderedSources {
                 guard let id = source.bundleIdentifier, runningKnownIDs.contains(id) else {
                     continue
                 }
-                if let candidate = await source.currentTrack(), !candidate.isPaused {
-                    resolvedTrack = candidate
-                    break
+                if let candidate = await source.currentTrack() {
+                    if !candidate.isPaused {
+                        resolvedTrack = candidate
+                        break
+                    } else if pausedCandidate == nil {
+                        pausedCandidate = candidate
+                    }
                 }
+            }
+            if resolvedTrack == nil {
+                resolvedTrack = pausedCandidate
             }
         }
 
