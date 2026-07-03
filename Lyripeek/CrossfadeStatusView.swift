@@ -168,14 +168,17 @@ final class CrossfadeStatusView: NSView {
         textFieldB.frame = NSRect(x: textRightX - textSizeB.width, y: yB, width: textSizeB.width, height: textSizeB.height)
 
         let iconY = (bounds.height - iconSize) / 2
+        let iconXA = textFieldA.stringValue.isEmpty ? horizontalPadding : (textFieldA.frame.minX - iconTextSpacing - iconSize)
+        let iconXB = textFieldB.stringValue.isEmpty ? horizontalPadding : (textFieldB.frame.minX - iconTextSpacing - iconSize)
+
         iconViewA.frame = NSRect(
-            x: textFieldA.frame.minX - iconTextSpacing - iconSize,
+            x: iconXA,
             y: iconY,
             width: iconSize,
             height: iconSize
         )
         iconViewB.frame = NSRect(
-            x: textFieldB.frame.minX - iconTextSpacing - iconSize,
+            x: iconXB,
             y: iconY,
             width: iconSize,
             height: iconSize
