@@ -161,7 +161,12 @@ private struct ProgressBar: View {
     var body: some View {
         let currentElapsed = isEditing ? localElapsed : elapsed
 
-        VStack(spacing: 4) {
+        HStack(spacing: 8) {
+            Text(format(currentElapsed))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+
             Slider(
                 value: Binding<Double>(
                     get: { currentElapsed },
@@ -182,14 +187,10 @@ private struct ProgressBar: View {
             .tint(Color.accentColor)
             .disabled(duration <= 0)
 
-            HStack {
-                Text(format(currentElapsed))
-                Spacer()
-                Text(format(duration))
-            }
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(.secondary)
-            .monospacedDigit()
+            Text(format(duration))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
         }
         .opacity(duration > 0 ? 1.0 : 0.6)
     }
