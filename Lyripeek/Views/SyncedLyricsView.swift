@@ -61,7 +61,7 @@ struct SyncedLyricsView: View {
 
     private func lyricsList(currentIndex: Int) -> some View {
         ScrollViewReader { proxy in
-            ScrollView(showsIndicators: lyricsService.isSynced ? false : true) {
+            ScrollView(showsIndicators: false) {
                 VStack(spacing: lyricsService.isSynced ? 4 : 8) {
                     // Spacer at the top so the first lines don't get cut off
                     // when scrolled to .center.
