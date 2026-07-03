@@ -33,6 +33,7 @@ struct DesktopTrack {
     let source: String
     let bundleIdentifier: String?
     let isPaused: Bool
+    let artworkURL: String?
 
     init(
         title: String,
@@ -43,7 +44,8 @@ struct DesktopTrack {
         playbackRate: Double = 1,
         source: String,
         bundleIdentifier: String?,
-        isPaused: Bool = false
+        isPaused: Bool = false,
+        artworkURL: String? = nil
     ) {
         self.title = title
         self.artist = artist
@@ -54,6 +56,7 @@ struct DesktopTrack {
         self.source = source
         self.bundleIdentifier = bundleIdentifier
         self.isPaused = isPaused
+        self.artworkURL = artworkURL
     }
 
     var hasMetadata: Bool {

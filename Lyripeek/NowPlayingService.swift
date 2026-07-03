@@ -67,7 +67,7 @@ final class NowPlayingService: ObservableObject {
     @Published private(set) var isPlaying: Bool = false
 
     /// Emitted whenever the playing track (title + artist) changes.
-    var trackChangedPublisher: AnyPublisher<(title: String, artist: String, album: String, duration: TimeInterval), Never> {
+    var trackChangedPublisher: AnyPublisher<(title: String, artist: String, album: String, duration: TimeInterval, artworkURL: String?), Never> {
         trackChangedSubject.eraseToAnyPublisher()
     }
 
@@ -162,7 +162,7 @@ final class NowPlayingService: ObservableObject {
     private var launchObserver: NSObjectProtocol?
 
     private var cancellables = Set<AnyCancellable>()
-    private let trackChangedSubject = PassthroughSubject<(title: String, artist: String, album: String, duration: TimeInterval), Never>()
+    private let trackChangedSubject = PassthroughSubject<(title: String, artist: String, album: String, duration: TimeInterval, artworkURL: String?), Never>()
 
     init() {
         self.systemSource = SystemNowPlayingPlayerSource()
@@ -411,9 +411,10 @@ final class NowPlayingService: ObservableObject {
                 playbackRate: track.playbackRate,
                 source: resolvedSource,
                 bundleIdentifier: track.bundleIdentifier,
-                isPaused: track.isPaused
+                isPaused: track.isPaused,
+                artworkURL: track.artworkURL
             ),
-            artwork: systemArtwork
+            artwork: track.artworkURL != nil ? nil : systemArtwork
         )
     }
 
@@ -437,7 +438,8 @@ final class NowPlayingService: ObservableObject {
                         playbackRate: track.playbackRate,
                         source: track.source,
                         bundleIdentifier: track.bundleIdentifier,
-                        isPaused: track.isPaused
+                        isPaused: track.isPaused,
+                        artworkURL: track.artworkURL
                     )
                 } else {
                     lastSeekAt = nil
@@ -537,7 +539,7 @@ final class NowPlayingService: ObservableObject {
         }
 
         if trackDidChange && (!newTitle.isEmpty || !newArtist.isEmpty) {
-            trackChangedSubject.send((title: newTitle, artist: newArtist, album: newAlbum, duration: resolvedTrack.duration))
+            trackChangedSubject.send((title: newTitle, artist: newArtist, album: newAlbum, duration: resolvedTrack.duration, artworkURL: resolvedTrack.artworkURL))
         }
     }
 

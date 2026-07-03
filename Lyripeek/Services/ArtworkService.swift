@@ -28,7 +28,7 @@ final class ArtworkService: ObservableObject {
     private var pendingKey: String?
     private var currentKey: String = ""
 
-    func load(title: String, artist: String) {
+    func load(title: String, artist: String, artworkURL: String? = nil) {
         let key = cacheKey(title: title, artist: artist)
         currentKey = key
 
@@ -62,8 +62,18 @@ final class ArtworkService: ObservableObject {
                 return
             }
 
-            // Disk miss (or corrupt file): fetch from network.
-            let data = await Self.fetchArtworkData(title: title, artist: artist)
+            // Disk miss (or corrupt file): fetch.
+            let data: Data?
+            if let artworkURL {
+                let upgraded = Self.upgradeArtworkURL(artworkURL)
+                if let url = URL(string: upgraded) {
+                    data = await Self.fetchArtworkFromURL(url)
+                } else {
+                    data = nil
+                }
+            } else {
+                data = await Self.fetchArtworkData(title: title, artist: artist)
+            }
 
             await MainActor.run {
                 guard let self else { return }
@@ -244,6 +254,61 @@ final class ArtworkService: ObservableObject {
         } catch {
             return nil
         }
+    }
+
+    nonisolated private static func upgradeArtworkURL(_ urlString: String) -> String {
+        var upgraded = urlString
+        // Upgrade Google/YouTube usercontent artwork URLs to higher resolution if possible.
+        // E.g., "=w60-h60-l90-rj" -> "=w600-h600-l90-rj"
+        // or "=w120-h120" -> "=w600-h600"
+        // or "=s90-c" -> "=s600-c"
+        if upgraded.contains("googleusercontent.com") || upgraded.contains("ytimg.com") {
+            // Replace =w\d+-h\d+ with =w600-h600
+            if let regex = try? NSRegularExpression(pattern: "([?&]|=)w\\d+-h\\d+", options: []) {
+                let range = NSRange(upgraded.startIndex..., in: upgraded)
+                upgraded = regex.stringByReplacingMatches(in: upgraded, options: [], range: range, withTemplate: "$1w600-h600")
+            }
+            // Also handle =s\d+ (e.g. =s90) -> =s600
+            if let regex = try? NSRegularExpression(pattern: "([?&]|=)s\\d+", options: []) {
+                let range = NSRange(upgraded.startIndex..., in: upgraded)
+                upgraded = regex.stringByReplacingMatches(in: upgraded, options: [], range: range, withTemplate: "$1s600")
+            }
+        }
+        return upgraded
+    }
+
+    nonisolated private static func fetchArtworkFromURL(_ url: URL) async -> Data? {
+        var urlsToTry: [URL] = [url]
+        let urlString = url.absoluteString
+        if urlString.contains("ytimg.com") && urlString.contains("/default.jpg") {
+            if let maxresURL = URL(string: urlString.replacingOccurrences(of: "/default.jpg", with: "/maxresdefault.jpg")) {
+                urlsToTry.insert(maxresURL, at: 0)
+            }
+            if let hqURL = URL(string: urlString.replacingOccurrences(of: "/default.jpg", with: "/hqdefault.jpg")) {
+                if urlsToTry.count > 1 {
+                    urlsToTry.insert(hqURL, at: 1)
+                } else {
+                    urlsToTry.insert(hqURL, at: 0)
+                }
+            }
+        }
+
+        for candidateURL in urlsToTry {
+            var request = URLRequest(url: candidateURL)
+            request.setValue("Lyripeek/0.1.0", forHTTPHeaderField: "User-Agent")
+            request.timeoutInterval = 6
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                if let httpResponse = response as? HTTPURLResponse,
+                   (200..<300).contains(httpResponse.statusCode),
+                   !data.isEmpty {
+                    return data
+                }
+            } catch {
+                // Continue to next candidate
+            }
+        }
+        return nil
     }
 }
 

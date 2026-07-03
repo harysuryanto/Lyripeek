@@ -43,6 +43,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         self.updateService = updateService
 
         let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.autosaveName = "LyripeekStatusItem"
 
         let statusView = CrossfadeStatusView()
         statusView.icon = NSImage(

@@ -109,7 +109,8 @@ final class KasetPlayerSource: PlayerSource {
             playbackRate: 1,
             source: source,
             bundleIdentifier: bundleIdentifier,
-            isPaused: isPaused
+            isPaused: isPaused,
+            artworkURL: track.artworkURL
         )
     }
 }
