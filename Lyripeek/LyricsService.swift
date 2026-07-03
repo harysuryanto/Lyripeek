@@ -22,6 +22,8 @@ final class LyricsService: ObservableObject {
     @Published private(set) var fetchFailed: Bool = false
     @Published private(set) var lastFetchURL: URL? = nil
     @Published private(set) var lyricsSource: String = ""
+    @Published private(set) var isSynced: Bool = true
+
 
     // POOLED PROVIDERS: Tried sequentially from first to last.
     private let providers: [LyricsProvider] = [
@@ -88,7 +90,15 @@ final class LyricsService: ObservableObject {
         pendingKey = key
 
         if let cachedLRC = cache[key] {
-            lines = parseLRC(cachedLRC)
+            let parsed = parseLRC(cachedLRC)
+            if !parsed.isEmpty {
+                self.isSynced = true
+                self.lines = parsed
+            } else {
+                let plainParsed = parsePlainLyrics(cachedLRC)
+                self.isSynced = false
+                self.lines = plainParsed
+            }
             rawLRC = cachedLRC
             lyricsSource = extractSource(from: cachedLRC, fallback: "Cached")
             isLoading = false
@@ -101,12 +111,14 @@ final class LyricsService: ObservableObject {
         lyricsSource = ""
         lines = []
         rawLRC = ""
+        isSynced = true
 
         Task { [weak self] in
             guard let self = self else { return }
 
             var fetchSuccess = false
             var lastError: Error? = nil
+            var firstUnsyncedResult: (lrc: String, source: String)? = nil
 
             for provider in self.providers {
                 // Ensure we are still fetching the same track before trying the next provider
@@ -131,28 +143,63 @@ final class LyricsService: ObservableObject {
                     ) {
                         let (realLRC, source) = result
                         let parsed = parseLRC(realLRC)
-                        await MainActor.run {
-                            guard self.currentTrack?.title == title,
-                                  self.currentTrack?.artist == artist,
-                                  self.currentTrack?.album == album else {
-                                return
+                        if !parsed.isEmpty {
+                            await MainActor.run {
+                                guard self.currentTrack?.title == title,
+                                      self.currentTrack?.artist == artist,
+                                      self.currentTrack?.album == album else {
+                                    return
+                                }
+                                let cachedLRCWithSource = "[re:\(source)]\n" + realLRC
+                                self.cache[key] = cachedLRCWithSource
+                                self.saveCacheToDisk()
+                                self.lines = parsed
+                                self.rawLRC = realLRC
+                                self.lyricsSource = source.capitalized
+                                self.isSynced = true
+                                self.isLoading = false
+                                self.hasNoLyrics = false
+                                self.fetchFailed = false
+                                self.pendingKey = nil
                             }
-                            let cachedLRCWithSource = "[re:\(source)]\n" + realLRC
-                            self.cache[key] = cachedLRCWithSource
-                            self.saveCacheToDisk()
-                            self.lines = parsed
-                            self.rawLRC = realLRC
-                            self.lyricsSource = source.capitalized
-                            self.isLoading = false
-                            self.hasNoLyrics = parsed.isEmpty
-                            self.fetchFailed = false
-                            self.pendingKey = nil
+                            fetchSuccess = true
+                            break
+                        } else {
+                            // Unsynced lyrics candidate
+                            let plainParsed = parsePlainLyrics(realLRC)
+                            if !plainParsed.isEmpty && firstUnsyncedResult == nil {
+                                firstUnsyncedResult = (realLRC, source)
+                            }
                         }
-                        fetchSuccess = true
-                        break
                     }
                 } catch {
                     lastError = error
+                }
+            }
+
+            if !fetchSuccess {
+                if let unsynced = firstUnsyncedResult {
+                    let (realLRC, source) = unsynced
+                    let parsed = parsePlainLyrics(realLRC)
+                    await MainActor.run {
+                        guard self.currentTrack?.title == title,
+                              self.currentTrack?.artist == artist,
+                              self.currentTrack?.album == album else {
+                            return
+                        }
+                        let cachedLRCWithSource = "[re:\(source)]\n" + realLRC
+                        self.cache[key] = cachedLRCWithSource
+                        self.saveCacheToDisk()
+                        self.lines = parsed
+                        self.rawLRC = realLRC
+                        self.lyricsSource = source.capitalized
+                        self.isSynced = false
+                        self.isLoading = false
+                        self.hasNoLyrics = false
+                        self.fetchFailed = false
+                        self.pendingKey = nil
+                    }
+                    fetchSuccess = true
                 }
             }
 
@@ -234,6 +281,11 @@ final class LyricsService: ObservableObject {
     /// Updates `currentLineText` to the lyric line active at `time`, taking
     /// the user-adjustable `offset` into account.
     func updateCurrentLine(at time: TimeInterval) {
+        guard isSynced else {
+            currentLineText = ""
+            nextLineText = ""
+            return
+        }
         let index = currentLineIndex(lines: lines, currentTime: time - offset)
         guard lines.indices.contains(index) else {
             currentLineText = ""
@@ -368,7 +420,13 @@ struct LRCLIBProvider: LyricsProvider {
         }
 
         let result = try JSONDecoder().decode(LRCLIBResult.self, from: data)
-        return result.hasSyncedLyrics ? result.syncedLyrics : nil
+        if result.hasSyncedLyrics, let synced = result.syncedLyrics {
+            return synced
+        }
+        if result.hasPlainLyrics, let plain = result.plainLyrics {
+            return plain
+        }
+        return nil
     }
 
     private func fetchSearch(title: String, artist: String) async throws -> String? {
@@ -398,17 +456,30 @@ struct LRCLIBProvider: LyricsProvider {
         }
 
         let results = try JSONDecoder().decode([LRCLIBResult].self, from: data)
-        return results.first { $0.hasSyncedLyrics }?.syncedLyrics
+        if let syncedResult = results.first(where: { $0.hasSyncedLyrics }), let synced = syncedResult.syncedLyrics {
+            return synced
+        }
+        if let plainResult = results.first(where: { $0.hasPlainLyrics }), let plain = plainResult.plainLyrics {
+            return plain
+        }
+        return nil
     }
 
     private struct LRCLIBResult: Codable {
         let instrumental: Bool?
         let syncedLyrics: String?
+        let plainLyrics: String?
 
         var hasSyncedLyrics: Bool {
             guard !(instrumental ?? false) else { return false }
             guard let syncedLyrics else { return false }
             return !syncedLyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        var hasPlainLyrics: Bool {
+            guard !(instrumental ?? false) else { return false }
+            guard let plainLyrics else { return false }
+            return !plainLyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 }
@@ -468,7 +539,6 @@ struct LyricaProvider: LyricsProvider {
 
         let result = try JSONDecoder().decode(LyricaResponse.self, from: data)
         guard let lyricaData = result.data,
-              lyricaData.hasTimestamps == true,
               let lyrics = lyricaData.lyrics else {
             return nil
         }

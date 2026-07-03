@@ -113,8 +113,10 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             .sink { [weak self] elapsedTime, lyricsTuple in
                 let (firstThree, hasNoLyrics, fetchFailed, offset) = lyricsTuple
                 let (lines, isLoading, nextLineText) = firstThree
+                let isSynced = self?.lyricsService?.isSynced ?? true
                 self?.updateMenuBarTitle(
                     isLoading: isLoading,
+                    isSynced: isSynced,
                     lines: lines,
                     currentTime: elapsedTime,
                     offset: offset,
@@ -141,6 +143,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
     private func updateMenuBarTitle(
         isLoading: Bool,
+        isSynced: Bool,
         lines: [LyricLine],
         currentTime: TimeInterval,
         offset: TimeInterval,
@@ -156,6 +159,8 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             statusView.setAttributedText(NSAttributedString(string: "Failed to fetch lyrics"))
         } else if hasNoLyrics {
             statusView.setAttributedText(NSAttributedString(string: "Can't find synced lyrics"))
+        } else if !isSynced {
+            statusView.setAttributedText(NSAttributedString(string: "Click to see lyrics"))
         } else if lines.isEmpty {
             statusView.setAttributedText(NSAttributedString(string: ""))
         } else {
@@ -207,6 +212,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         guard let lyricsService, let nowPlayingService else { return }
         updateMenuBarTitle(
             isLoading: lyricsService.isLoading,
+            isSynced: lyricsService.isSynced,
             lines: lyricsService.lines,
             currentTime: nowPlayingService.elapsedTime,
             offset: lyricsService.offset,

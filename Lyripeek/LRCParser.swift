@@ -138,3 +138,34 @@ private func substring(for range: NSRange, in string: String) -> String {
     guard let swiftRange = Range(range, in: string) else { return "" }
     return String(string[swiftRange])
 }
+
+/// Parses unsynced plain lyrics text into an array of `LyricLine`.
+/// Collapses consecutive empty lines into a single empty line, and removes leading/trailing empty lines.
+func parsePlainLyrics(_ plain: String) -> [LyricLine] {
+    var lines: [LyricLine] = []
+    var previousWasEmpty = false
+    
+    let rawLines = plain.components(separatedBy: .newlines)
+    for rawLine in rawLines {
+        let line = rawLine.trimmingCharacters(in: .whitespaces)
+        if line.isEmpty {
+            if !lines.isEmpty && !previousWasEmpty {
+                lines.append(LyricLine(time: 0, text: "", words: []))
+                previousWasEmpty = true
+            }
+        } else {
+            // Skip metadata tags like [re:LRCLIB] or [ar:Artist]
+            if line.hasPrefix("[") && line.hasSuffix("]") && line.contains(":") {
+                continue
+            }
+            lines.append(LyricLine(time: 0, text: line, words: []))
+            previousWasEmpty = false
+        }
+    }
+    
+    // Remove trailing empty line if any
+    if let last = lines.last, last.text.isEmpty {
+        lines.removeLast()
+    }
+    return lines
+}

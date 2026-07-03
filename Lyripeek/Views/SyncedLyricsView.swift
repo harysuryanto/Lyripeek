@@ -60,19 +60,24 @@ struct SyncedLyricsView: View {
 
     private func lyricsList(currentIndex: Int) -> some View {
         ScrollViewReader { proxy in
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 4) {
+            ScrollView(showsIndicators: lyricsService.isSynced ? false : true) {
+                VStack(spacing: lyricsService.isSynced ? 4 : 8) {
                     // Spacer at the top so the first lines don't get cut off
                     // when scrolled to .center.
-                    Color.clear.frame(height: 40).id("top-spacer")
+                    Color.clear.frame(height: lyricsService.isSynced ? 40 : 12).id("top-spacer")
 
                     ForEach(Array(lyricsService.lines.enumerated()), id: \.element.id) { index, line in
-                        lyricLineView(line: line, index: index, currentIndex: currentIndex)
-                            .id(line.id)
+                        if lyricsService.isSynced {
+                            lyricLineView(line: line, index: index, currentIndex: currentIndex)
+                                .id(line.id)
+                        } else {
+                            unsyncedLyricLineView(line: line)
+                                .id(line.id)
+                        }
                     }
 
                     if !lyricsService.lyricsSource.isEmpty {
-                        Text("Lyrics from \(lyricsService.lyricsSource)")
+                        Text("Lyrics from \(lyricsService.lyricsSource)\(lyricsService.isSynced ? "" : " (Unsynced)")")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.tertiary)
                             .padding(.top, 16)
@@ -80,12 +85,13 @@ struct SyncedLyricsView: View {
                             .frame(maxWidth: .infinity)
                     }
 
-                    Color.clear.frame(height: 40).id("bottom-spacer")
+                    Color.clear.frame(height: lyricsService.isSynced ? 40 : 12).id("bottom-spacer")
                 }
                 .padding(.horizontal, 24)
-                .animation(.easeInOut(duration: 0.35), value: currentIndex)
+                .animation(lyricsService.isSynced ? .easeInOut(duration: 0.35) : nil, value: currentIndex)
             }
             .onChange(of: currentIndex) { _, newIndex in
+                guard lyricsService.isSynced else { return }
                 guard !scrollCoordinator.isAutoScrollPaused else { return }
                 guard lyricsService.lines.indices.contains(newIndex) else { return }
                 scrollToLine(newIndex, using: proxy)
@@ -95,6 +101,7 @@ struct SyncedLyricsView: View {
             }
             .onHover { scrollCoordinator.isHovered = $0 }
             .onAppear {
+                guard lyricsService.isSynced else { return }
                 scrollCoordinator.isAutoScrollPaused = false
                 scrollToLine(currentIndex, using: proxy)
                 scrollCoordinator.startMonitoring()
@@ -103,7 +110,7 @@ struct SyncedLyricsView: View {
                 scrollCoordinator.stopMonitoring()
             }
             .overlay(alignment: .bottom) {
-                if scrollCoordinator.isAutoScrollPaused {
+                if lyricsService.isSynced && scrollCoordinator.isAutoScrollPaused {
                     Button {
                         scrollCoordinator.isAutoScrollPaused = false
                         scrollToLine(currentIndex, using: proxy)
@@ -152,6 +159,16 @@ struct SyncedLyricsView: View {
         }
         .scaleEffect(isCurrent ? 1.06 : 0.94)
         .animation(.spring(response: 0.4, dampingFraction: 0.75, blendDuration: 0), value: isCurrent)
+    }
+
+    @ViewBuilder
+    private func unsyncedLyricLineView(line: LyricLine) -> some View {
+        Text(line.text.isEmpty ? " " : line.text)
+            .font(.system(size: 16, weight: .medium))
+            .foregroundStyle(Color.primary.opacity(0.85))
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 2)
     }
 
     /// Active line uses the system accent color at full opacity; all other
