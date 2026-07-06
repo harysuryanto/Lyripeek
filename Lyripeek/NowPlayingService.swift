@@ -143,6 +143,12 @@ final class NowPlayingService: ObservableObject {
     /// observer, so this only bounds "app running, user presses play"
     /// detection.
     private static let idleIntervalSeconds: TimeInterval = 5.0
+    /// Maximum |diff| (source time − wall-clock expectation) that is treated
+    /// as pure AppleScript/OS jitter and suppressed entirely. When the diff
+    /// is this small, re-anchoring the interpolation baseline would only
+    /// introduce a micro-stutter on the very next 10 Hz tick; the running
+    /// interpolator is already accurate enough to skip the update.
+    private static let jitterToleranceSeconds: TimeInterval = 0.05
 
     /// Wall-clock time of the last non-paused `applyTrack`. Drives
     /// `currentPollInterval()`: while within `activeCooldownSeconds` of this
@@ -519,6 +525,13 @@ final class NowPlayingService: ObservableObject {
                 lastReportedAt = now
                 lastReportedRate = resolvedTrack.playbackRate
                 elapsedTime = resolvedTrack.elapsedTime
+            } else if abs(diff) < Self.jitterToleranceSeconds {
+                // Negligible jitter (< 50 ms): the wall-clock interpolator is already
+                // accurate to within one 10 Hz tick. Skipping the baseline reset avoids
+                // a micro-stutter that re-anchoring `lastReportedAt` would cause.
+                // The existing driftOffset (if any) stays intact — it bridges the
+                // previous poll's jitter gap and is still part of the continuous
+                // interpolation; clearing it here would cause a backward jump.
             } else {
                 // Polling/AppleScript jitter: The minor difference is due to OS execution
                 // overhead or discrete player updates.
