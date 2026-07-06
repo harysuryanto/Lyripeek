@@ -197,7 +197,7 @@ private struct ProgressBar: View {
 
     private func format(_ time: TimeInterval) -> String {
         guard time.isFinite, time >= 0 else { return "0:00" }
-        let total = Int(time.rounded())
+        let total = Int(time)
         let minutes = total / 60
         let seconds = total % 60
         return String(format: "%d:%02d", minutes, seconds)
