@@ -222,7 +222,9 @@ final class NowPlayingService: ObservableObject {
                   let bundleID = app.bundleIdentifier,
                   MediaRemoteClient.shared.isKnownPublisher(bundleID)
             else { return }
-            self.restartPollingForLaunch()
+            Task { @MainActor in
+                self.restartPollingForLaunch()
+            }
         }
     }
 
