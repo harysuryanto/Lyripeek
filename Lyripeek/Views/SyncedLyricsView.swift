@@ -28,7 +28,7 @@ struct SyncedLyricsView: View {
                 lyricsList(currentIndex: currentIndex)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: 220, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: - States

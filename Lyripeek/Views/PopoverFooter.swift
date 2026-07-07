@@ -43,6 +43,9 @@ struct PopoverFooter: View {
         HStack(spacing: 8) {
             offsetControl
             Spacer(minLength: 4)
+            if updateService.isUpdateAvailable {
+                updateButton
+            }
             refetchButton
             animateToggle
             twoLineToggle
@@ -51,6 +54,7 @@ struct PopoverFooter: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
+        .frame(height: 48)
     }
 
     // MARK: - Controls
@@ -133,25 +137,34 @@ struct PopoverFooter: View {
         .help("Two-line mode: show current and next line in menu bar")
     }
 
+    private var updateButton: some View {
+        Button {
+            updateService.openDownload()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Update")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .frame(height: 24)
+        .background(Color.orange.opacity(0.15))
+        .foregroundStyle(.orange)
+        .cornerRadius(4)
+        .help(updateService.latestVersion.map { "Download Lyripeek \($0)" } ?? "Download latest update")
+    }
+
     private var debugButton: some View {
         Button(action: onOpenDebug) {
             Image(systemName: "info.circle")
                 .font(.system(size: 12, weight: .medium))
                 .frame(width: 24, height: 24)
-                .overlay(alignment: .topTrailing) {
-                    if updateService.isUpdateAvailable {
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: 7, height: 7)
-                            .overlay(Circle().fill(.white).frame(width: 2.5, height: 2.5))
-                            .offset(x: 1.5, y: -1.5)
-                    }
-                }
         }
         .buttonStyle(.borderless)
-        .help(updateService.isUpdateAvailable
-              ? "Update available — show info"
-              : "Show debug info")
+        .help("Show debug info")
     }
 
     private var quitButton: some View {
