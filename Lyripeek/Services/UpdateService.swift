@@ -82,10 +82,9 @@ final class UpdateService: ObservableObject {
         }
     }
 
-    /// Opens the DMG download URL (or the release page, or the repo page) in
-    /// the user's default browser.
-    func openDownload() {
-        let url = downloadURL ?? releasePageURL ?? Self.repositoryURL
+    /// Opens the latest release page (or the repo page) in the user's default browser.
+    func openReleasePage() {
+        let url = releasePageURL ?? Self.repositoryURL
         NSWorkspace.shared.open(url)
     }
 

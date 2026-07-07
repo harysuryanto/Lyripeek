@@ -139,7 +139,7 @@ struct PopoverFooter: View {
 
     private var updateButton: some View {
         Button {
-            updateService.openDownload()
+            updateService.openReleasePage()
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.down.circle.fill")

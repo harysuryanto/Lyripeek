@@ -219,7 +219,7 @@ struct AboutTab: View {
                     }
                     Spacer(minLength: 0)
                     Button("Download") {
-                        updateService.openDownload()
+                        updateService.openReleasePage()
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
