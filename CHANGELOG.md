@@ -1,49 +1,60 @@
 # Changelog
 
+## [0.3.0] - 2026-07-07
+### ✨ Added
+- Smooth lyric line transitions and word-by-word highlighting animations.
+- Word-by-word lyrics in the menu bar.
+- Playback seeking support directly from the app, including tap-to-seek on lyrics.
+- Smart lyric search: automatically falls back to alternative providers if the main one fails.
+- Support for displaying unsynced lyrics when synced versions are unavailable.
+- Alternative lyric provider (Lyrica) as a fallback.
+- Lyric provider attribution at the bottom of the lyrics list.
+- High-resolution album artwork specifically for Kaset.
+- Hidden scrollbar in the lyrics list for a cleaner interface.
+- Aligned progress bar slider with time indicators and increased their text size.
+
+### 🐛 Fixed
+- Lyric timing precision by flooring the elapsed time instead of rounding.
+- Lyric micro-stuttering by smoothing the time interpolation.
+- Flickering lyrics caused by synchronization issues with macOS duration reporting.
+- Song information disappearing when playback is paused.
+- Empty state indicator in the menu bar to a friendlier "Lyrics not found".
+- Spacing issues in the menu bar when the text is empty.
+
+### 🔧 Changed
+- Overall application performance improvements by reducing search and disk write operations.
+
 ## [0.2.0] - 2026-06-30
+### ✨ Added
+- Manual lyrics scrolling. Scrolling pauses auto-scroll; a floating "Sync" button re-aligns lyrics to the song.
+- Media playback controls (Play/Pause, Previous, Next) inside the popover.
+- Two-line mode in the menu bar to view the current and next lyric lines simultaneously (with the next line dimmed).
+- Automatic daily update checker with a download button in settings.
+- Option to automatically launch Lyripeek when your Mac starts (Open at Login).
 
-### Added
+### 🐛 Fixed
+- Memory leak caused by repeatedly opening and closing the debug window.
 
-- 🎛️ Media playback controls in the popover (Previous Track, Play/Pause, Next Track)
-- 📝 Two-line mode for menu bar lyrics — shows current and next line, toggled from the popover footer
-- 🔐 Launch-at-login support via the context menu
-- 🔔 Update checker that checks GitHub releases daily at 22:00, with a download button and red-dot badge
-- ✋ Manual lyrics scrolling with a floating Sync button to resume auto-scroll
-- 💾 Disk-persisted artwork cache with 200-image LRU eviction under `~/Library/Caches`
-
-### Changed
-
-- 🔧 Migrated from deprecated `statusItem.view` to button embedding with Auto Layout
-- 🔧 Lyrics and artwork caches moved from `~/Library/Application Support` to `~/Library/Caches` so macOS can purge them under disk pressure and Time Machine skips them
-- 🔧 LRCLIB lyrics fetch now tries exact `/api/get` (album + duration) first, falling back to search
-- 🔧 iTunes artwork fetch gated on system artwork presence — skipped when the system already provides it
-- 🔧 Adaptive now-playing polling: 1 Hz while a track is playing, drops to 5 s when idle to reduce CPU and battery usage
-- 🔧 LRC timestamp regex cached at file level instead of recompiled on every call
-
-### Fixed
-
-- 🐛 Debug window no longer leaks a new `NSWindow` when reopened
-- 🐛 Removed duplicate `updateCurrentLine` calls when the popover was open
+### 🔧 Changed
+- Intelligent LRU caching for album artwork and lyrics to conserve disk space.
+- Highly accurate LRCLIB lyric searches that account for both album name and song duration.
+- Conserves battery and network usage by reusing macOS system artwork instead of re-downloading it.
+- Significantly reduced CPU and battery drain when no music apps are actively playing.
 
 ## [0.1.0] - 2026-06-27
+### ✨ Added
+- Initial release of Lyripeek: A smooth menu bar lyrics app.
+- System-wide music detection via macOS Now Playing.
+- Advanced automatic detection for Apple Music, Spotify, and Kaset.
+- Instant, precise lyrics from LRCLIB.
+- Beautiful, translucent popover design native to macOS.
+- Indicator shown when more than two music players are active at once.
+- Real-time lyrics that animate to the rhythm with 10Hz updates.
+- Lyric offset/delay adjustment that persists across sessions.
+- Runs entirely in the background without cluttering your Dock.
 
-### Added
+### 🔧 Changed
+- Dynamic music player detection strategy prioritizes the most active, frontmost music app.
 
-- 🎵 Initial release: time-synced menu-bar lyrics for the currently playing track
-- 📊 Status bar popover with surrounding lyric lines and a ± offset control for fine-tuning
-- ✨ Custom menu-bar view with animated crossfade and right alignment
-- 💾 Lyric offset is remembered between launches
-- 📂 Lyric cache stored on disk, with a reset button in the popover
-- 🎧 Generalized now-playing support — works with Spotify, Apple Music, VLC, Safari, Podcasts, and any app that publishes to the system Now Playing service
-- ⏱️ Smoother now-playing progress: 10 Hz interpolation with drift correction so the active lyric line stays in sync
-- 📦 DMG installer with a drag-to-Applications layout for easier installation
-
-### Changed
-
-- 🔧 Source label moved into the popover card subtitle (the standalone "now playing from" view was removed)
-- 🔧 Publisher detection rewritten to scan for the actively playing source at query time, instead of using a static priority list
-- 🔧 DMG window resized and icon dimensions reduced for a more compact installer layout
-
-### Removed
-
-- 🗑️ Demo mode and the mock lyric fallback (only real LRCLIB lyrics are shown now)
+### 🗑️ Removed
+- Demo mode and test lyrics used during early development.

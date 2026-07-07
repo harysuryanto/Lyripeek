@@ -55,11 +55,6 @@ Follow these steps when the user asks to "update the changelog":
     bullet list per section; one line per user-visible change. Avoid
     jargon (no Swift type names, no API names, no file paths).
 
-5.  **Language**: Use Bahasa Indonesia. You may use English words that
-    Indonesians use more often than the Bahasa Indonesia equivalent
-    (e.g. "app", "update", "menu bar", "lyrics", "now playing", "release",
-    "download", "install").
-
 # Reference Prompt
 
 "i want to make a changelog for my app which i will give to the end user.
