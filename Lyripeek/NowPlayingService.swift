@@ -487,27 +487,36 @@ final class NowPlayingService: ObservableObject {
 
         let now = Date()
 
+        // Determine if there has been a recent control interaction (seek) from our app
+        let no_control_interaction = (lastSeekAt == nil)
+
         if resolvedTrack.isPaused {
             // Paused: Reset drift and snap immediately to the exact player position.
-            // When paused, we do not need interpolation or drift adjustment since the time is static.
             driftOffset = 0
             lastReportedElapsed = resolvedTrack.elapsedTime
             lastReportedAt = now
             lastReportedRate = 0
-            elapsedTime = resolvedTrack.elapsedTime
+            
+            // Prevent sudden reverse timestamp if it's just lag and no control interaction
+            if no_control_interaction && resolvedTrack.elapsedTime < self.elapsedTime && (self.elapsedTime - resolvedTrack.elapsedTime) < 2.0 {
+                // Do nothing to elapsedTime to keep it from jumping backwards
+            } else {
+                elapsedTime = resolvedTrack.elapsedTime
+            }
         } else if trackDidChange || !wasPlaying {
             // Track changed or resumed from pause: Snap immediately to the exact player position.
-            // This ensures a clean baseline starting point for the new track/state.
             driftOffset = 0
             lastReportedElapsed = resolvedTrack.elapsedTime
             lastReportedAt = now
             lastReportedRate = resolvedTrack.playbackRate
-            elapsedTime = resolvedTrack.elapsedTime
+            
+            if no_control_interaction && !trackDidChange && resolvedTrack.elapsedTime < self.elapsedTime && (self.elapsedTime - resolvedTrack.elapsedTime) < 2.0 {
+                // Prevent sudden reverse timestamp when resuming from pause
+            } else {
+                elapsedTime = resolvedTrack.elapsedTime
+            }
         } else {
-            // Normal playback: Calculate where the local wall clock expects playback to be,
-            // using the previous baseline (lastReportedElapsed + lastReportedAt) and rate.
-            // Note: driftOffset is NOT included here — it is already baked into lastReportedElapsed
-            // via the previous poll's update. Adding it again would cause compounding accumulation.
+            // Normal playback: Calculate where the local wall clock expects playback to be.
             let expected: TimeInterval
             if lastReportedAt == .distantPast {
                 expected = resolvedTrack.elapsedTime
@@ -516,40 +525,43 @@ final class NowPlayingService: ObservableObject {
                 expected = lastReportedElapsed + delta * lastReportedRate
             }
 
-            // Difference between the raw source time and our pure wall-clock expectation.
             let diff = resolvedTrack.elapsedTime - expected
 
-            if abs(diff) > 0.5 {
-                // Seek detected: The player time has jumped significantly (more than 0.5 seconds)
-                // from what the wall clock expects. Snap instantly to this new position.
+            // If the source is behind by up to 2.0 seconds, treat as lag, not a seek.
+            // If the source jumps ahead by more than 0.5s, it's a forward seek.
+            let isSeek = (diff > 0.5) || (diff < -2.0)
+
+            if isSeek {
+                // Seek detected
                 driftOffset = 0
                 lastReportedElapsed = resolvedTrack.elapsedTime
                 lastReportedAt = now
                 lastReportedRate = resolvedTrack.playbackRate
                 elapsedTime = resolvedTrack.elapsedTime
             } else if abs(diff) < Self.jitterToleranceSeconds {
-                // Negligible jitter (< 50 ms): the wall-clock interpolator is already
-                // accurate to within one 10 Hz tick. Skipping the baseline reset avoids
-                // a micro-stutter that re-anchoring `lastReportedAt` would cause.
-                // The existing driftOffset (if any) stays intact — it bridges the
-                // previous poll's jitter gap and is still part of the continuous
-                // interpolation; clearing it here would cause a backward jump.
+                // Negligible jitter (< 50 ms), existing driftOffset stays intact
             } else {
-                // Polling/AppleScript jitter: The minor difference is due to OS execution
-                // overhead or discrete player updates.
+                // Polling/AppleScript jitter: minor diff caused by OS/AppleScript latency.
                 //
-                // We absorb it into `driftOffset` to keep elapsedTime perfectly smooth and
-                // monotonic (no backward/forward jumps that would cause lyric flickering).
-                // At the moment of this update, elapsedTime stays exactly at `expected`;
-                // subsequent 10 Hz ticks advance it naturally via:
-                //   displayed = newLastReportedElapsed + delta * rate + driftOffset
-                //             = track.elapsedTime + delta * rate + (expected - track.elapsedTime)
-                //             = expected + delta * rate   ← continuous, no jump
-                driftOffset = expected - resolvedTrack.elapsedTime
-                lastReportedElapsed = resolvedTrack.elapsedTime
-                lastReportedAt = now
-                lastReportedRate = resolvedTrack.playbackRate
-                elapsedTime = expected
+                // If the source has fallen *behind* what our wall-clock expects and no
+                // control interaction has happened, treat it as transient lag and skip
+                // resetting the baseline. This prevents a backward jump without inflating
+                // driftOffset (which would happen if we clamped nextElapsedTime and kept
+                // anchoring lastReportedElapsed to the raw source each poll).
+                if no_control_interaction && expected < self.elapsedTime {
+                    // Source is behind wall-clock expectation: do not re-anchor.
+                    // The running interpolator is already ahead; let the source catch up
+                    // on the next poll rather than reversing elapsedTime.
+                } else {
+                    // Source is ahead (or no protection needed): absorb into driftOffset
+                    // so elapsedTime stays at `expected` (no jump) and the 10 Hz tick
+                    // continues smoothly from there.
+                    driftOffset = expected - resolvedTrack.elapsedTime
+                    lastReportedElapsed = resolvedTrack.elapsedTime
+                    lastReportedAt = now
+                    lastReportedRate = resolvedTrack.playbackRate
+                    elapsedTime = expected
+                }
             }
         }
 
