@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0] - 2026-07-08
+### ✨ Added
+- Dedicated Update button in the popover footer for easier access to new versions.
+- Optimized popover layout for a more polished experience.
+
+### 🐛 Fixed
+- Backward elapsed time jumps caused by player polling lag.
+
+### 🔧 Changed
+- Update button now opens the release page in your browser instead of downloading directly.
+
 ## [0.3.0] - 2026-07-07
 ### ✨ Added
 - Smooth lyric line transitions and word-by-word highlighting animations.
