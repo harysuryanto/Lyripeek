@@ -55,6 +55,18 @@ struct TransportControls: View {
             .buttonStyle(.borderless)
             .disabled(!nowPlayingService.hasActiveTrack)
             .help("Next track")
+
+            Button {
+                nowPlayingService.rewind5Seconds()
+            } label: {
+                Image(systemName: "gobackward.5")
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: 20, height: 20)
+                    .foregroundStyle(.primary)
+            }
+            .buttonStyle(.borderless)
+            .disabled(!nowPlayingService.hasActiveTrack)
+            .help("Rewind 5 seconds")
         }
         .animation(.easeInOut(duration: 0.2), value: nowPlayingService.isPlaying)
     }

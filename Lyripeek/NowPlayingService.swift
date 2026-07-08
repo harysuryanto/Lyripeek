@@ -284,6 +284,13 @@ final class NowPlayingService: ObservableObject {
     /// Seeks the active player to the specified position (in seconds).
     /// If the matched player source cannot handle seeking, we fall back to
     /// the system Now Playing source.
+    /// Rewinds the active player by 5 seconds, clamped to the start of the
+    /// track. Reuses the existing seek path so all player sources behave
+    /// consistently.
+    func rewind5Seconds() {
+        seek(to: max(0, elapsedTime - 5))
+    }
+
     func seek(to position: TimeInterval) {
         // Snap interpolation state synchronously for instant visual feedback.
         // This must happen before the async Task so the 10 Hz tick immediately
