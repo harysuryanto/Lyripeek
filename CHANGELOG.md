@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.5.0] - 2026-07-08
+### ✨ Added
+- Rewind 5 seconds button next to the Next track control, so you can quickly jump back during playback.
+
 ## [0.4.0] - 2026-07-08
 ### ✨ Added
 - Dedicated Update button in the popover footer for easier access to new versions.
