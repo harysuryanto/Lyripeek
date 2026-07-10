@@ -107,6 +107,7 @@ private struct ArtworkTile: View {
                 Image(nsImage: artwork)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
+                    .frame(width: 88, height: 88)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .transition(.opacity.animation(.easeInOut(duration: 0.25)))
             } else {
