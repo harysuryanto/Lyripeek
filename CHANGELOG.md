@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1] - 2026-07-10
+### ✨ Added
+- Lyripeek now launches automatically at login for new installations.
+
+### 🐛 Fixed
+- Fixed an issue where album artwork could overflow horizontally in the player.
+
 ## [0.5.0] - 2026-07-08
 ### ✨ Added
 - Rewind 5 seconds button next to the Next track control, so you can quickly jump back during playback.
