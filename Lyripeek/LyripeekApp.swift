@@ -32,6 +32,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "animateMenuBar": true
         ])
 
+        // Enable "Launch at Login" by default for new installations.
+        // This is a one-time operation guarded by a 3-state UserDefaults key:
+        // nil = never decided (apply default), true/false = explicit choice (skip).
+        LoginItemService().enableByDefaultIfNeeded()
+
         // Load lyrics and artwork as soon as the playing track changes.
         nowPlayingService.trackChangedPublisher
             .sink { [weak self] track in
