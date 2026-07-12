@@ -155,9 +155,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         guard let statusView else { return }
 
         if isLoading {
-            statusView.setAttributedText(NSAttributedString(string: "Loading lyrics…"))
+            statusView.setAttributedText(NSAttributedString(string: "Scanning for lyrics (ง ◉ _ ◉)ง"))
         } else if fetchFailed {
-            statusView.setAttributedText(NSAttributedString(string: "Failed to fetch lyrics"))
+            statusView.setAttributedText(NSAttributedString(string: "Failed to fetch lyrics ¯\\_(ツ)_/¯"))
         } else if hasNoLyrics {
             statusView.setAttributedText(NSAttributedString(string: "Lyrics not found"))
         } else if !isSynced {

@@ -37,7 +37,7 @@ struct SyncedLyricsView: View {
         VStack(spacing: 12) {
             ProgressView()
                 .controlSize(.small)
-            Text("Loading lyrics…")
+            Text("Scanning for lyrics (ง ◉ _ ◉)ง")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
