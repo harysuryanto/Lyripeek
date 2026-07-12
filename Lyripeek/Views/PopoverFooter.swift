@@ -147,13 +147,14 @@ struct PopoverFooter: View {
                 Text("Update")
                     .font(.system(size: 11, weight: .semibold))
             }
+            .padding(.horizontal, 8)
+            .frame(height: 24)
+            .background(Color.orange.opacity(0.15))
+            .foregroundStyle(.orange)
+            .contentShape(Rectangle())
+            .cornerRadius(4)
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 8)
-        .frame(height: 24)
-        .background(Color.orange.opacity(0.15))
-        .foregroundStyle(.orange)
-        .cornerRadius(4)
         .help(updateService.latestVersion.map { "Download Lyripeek \($0)" } ?? "Download latest update")
     }
 
